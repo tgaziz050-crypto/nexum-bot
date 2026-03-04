@@ -209,55 +209,59 @@ def set_reminder(chat_id: int, minutes: int, text: str):
 # ── Обработка ответа AI ──────────────────────────────────────
 async def process_ai_response(message: Message, answer: str):
 
-user_id = message.from_user.id
-chat_id = message.chat.id
+    user_id = message.from_user.id
+    chat_id = message.chat.id
 
-if answer.startswith("IMAGE|"):
-    prompt = answer.split("|",1)[1]
-    url = generate_image(prompt)
-    await message.answer_photo(url)
-    return
+    if answer.startswith("IMAGE|"):
+        prompt = answer.split("|",1)[1]
+        url = generate_image(prompt)
+        await message.answer_photo(url)
+        return
 
-elif answer.startswith("WEATHER|"):
-    city = answer.split("|",1)[1]
-    weather = get_weather(city)
-    await message.answer(weather)
+    elif answer.startswith("WEATHER|"):
+        city = answer.split("|",1)[1]
+        weather = get_weather(city)
+        await message.answer(weather)
+        return
 
-elif answer.startswith("REMINDER|"):
-    try:
-        parts = answer.split("|", 2)
-        minutes = int(parts[1])
-        text = parts[2] if len(parts) > 2 else "Время!"
-        set_reminder(chat_id, minutes, text)
-        await message.answer(f"Напоминание поставлено через {minutes} мин: {text}")
-    except:
+    elif answer.startswith("REMINDER|"):
+        try:
+            parts = answer.split("|", 2)
+            minutes = int(parts[1])
+            text = parts[2] if len(parts) > 2 else "Время!"
+            set_reminder(chat_id, minutes, text)
+            await message.answer(f"Напоминание поставлено через {minutes} мин: {text}")
+        except:
+            await message.answer(answer)
+        return
+
+    elif answer.startswith("SEARCH|"):
+        query = answer.split("|", 1)[1]
+        await message.answer(f"Ищу: {query}...")
+
+        results = await search_web(query)
+
+        summary_prompt = f"Вот результаты поиска по запросу '{query}':\n\n{results}\n\nКратко расскажи пользователю что нашёл, обычным текстом без markdown."
+
+        messages = [
+            {"role": "system", "content": get_system_prompt(user_id)},
+            {"role": "user", "content": summary_prompt}
+        ]
+
+        response = ai.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            max_tokens=800
+        )
+
+        summary = response.choices[0].message.content
+        add_to_history(user_id, "assistant", summary)
+
+        await message.answer(summary)
+        return
+
+    else:
         await message.answer(answer)
-
-elif answer.startswith("SEARCH|"):
-    query = answer.split("|", 1)[1]
-    await message.answer(f"Ищу: {query}...")
-    results = await search_web(query)
-    summary_prompt = f"Вот результаты поиска по запросу '{query}':\n\n{results}\n\nКратко расскажи пользователю что нашёл, обычным текстом без markdown."
-    messages = [
-        {"role": "system", "content": get_system_prompt(user_id)},
-        {"role": "user", "content": summary_prompt}
-    ]
-    response = ai.chat.completions.create(
-    model="llama-3.3-70b-versatile",
-    messages=messages,
-    max_tokens=800
-    )
-    summary = response.choices[0].message.content
-    add_to_history(user_id, "assistant", summary)
-    await message.answer(summary)
-
-elif answer.startswith("WEATHER|"):
-    city = answer.split("|", 1)[1]
-    weather = await get_weather(city)
-    await message.answer(f"Погода в {city}:\n{weather}")
-
-else:
-    await message.answer(answer)
 
 # ══════════════════════════════════════════════════════════════
 #  HANDLERS

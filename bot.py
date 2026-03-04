@@ -242,22 +242,22 @@ elif answer.startswith("SEARCH|"):
         {"role": "system", "content": get_system_prompt(user_id)},
         {"role": "user", "content": summary_prompt}
     ]
-        response = ai.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            max_tokens=800
-        )
-        summary = response.choices[0].message.content
-        add_to_history(user_id, "assistant", summary)
-        await message.answer(summary)
+    response = ai.chat.completions.create(
+    model="llama-3.3-70b-versatile",
+    messages=messages,
+    max_tokens=800
+    )
+    summary = response.choices[0].message.content
+    add_to_history(user_id, "assistant", summary)
+    await message.answer(summary)
 
-    elif answer.startswith("WEATHER|"):
-        city = answer.split("|", 1)[1]
-        weather = await get_weather(city)
-        await message.answer(f"Погода в {city}:\n{weather}")
+elif answer.startswith("WEATHER|"):
+    city = answer.split("|", 1)[1]
+    weather = await get_weather(city)
+    await message.answer(f"Погода в {city}:\n{weather}")
 
-    else:
-        await message.answer(answer)
+else:
+    await message.answer(answer)
 
 # ══════════════════════════════════════════════════════════════
 #  HANDLERS

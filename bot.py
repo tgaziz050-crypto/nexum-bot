@@ -218,30 +218,30 @@ if answer.startswith("IMAGE|"):
     await message.answer_photo(url)
     return
 
-    elif answer.startswith("WEATHER|"):
-        city = answer.split("|",1)[1]
-        weather = get_weather(city)
-        await message.answer(weather)
+elif answer.startswith("WEATHER|"):
+    city = answer.split("|",1)[1]
+    weather = get_weather(city)
+    await message.answer(weather)
 
-    elif answer.startswith("REMINDER|"):
-        try:
-            parts = answer.split("|", 2)
-            minutes = int(parts[1])
-            text = parts[2] if len(parts) > 2 else "Время!"
-            set_reminder(chat_id, minutes, text)
-            await message.answer(f"Напоминание поставлено через {minutes} мин: {text}")
-        except:
-            await message.answer(answer)
+elif answer.startswith("REMINDER|"):
+    try:
+        parts = answer.split("|", 2)
+        minutes = int(parts[1])
+        text = parts[2] if len(parts) > 2 else "Время!"
+        set_reminder(chat_id, minutes, text)
+        await message.answer(f"Напоминание поставлено через {minutes} мин: {text}")
+    except:
+        await message.answer(answer)
 
-    elif answer.startswith("SEARCH|"):
-        query = answer.split("|", 1)[1]
-        await message.answer(f"Ищу: {query}...")
-        results = await search_web(query)
-        summary_prompt = f"Вот результаты поиска по запросу '{query}':\n\n{results}\n\nКратко расскажи пользователю что нашёл, обычным текстом без markdown."
-        messages = [
-            {"role": "system", "content": get_system_prompt(user_id)},
-            {"role": "user", "content": summary_prompt}
-        ]
+elif answer.startswith("SEARCH|"):
+    query = answer.split("|", 1)[1]
+    await message.answer(f"Ищу: {query}...")
+    results = await search_web(query)
+    summary_prompt = f"Вот результаты поиска по запросу '{query}':\n\n{results}\n\nКратко расскажи пользователю что нашёл, обычным текстом без markdown."
+    messages = [
+        {"role": "system", "content": get_system_prompt(user_id)},
+        {"role": "user", "content": summary_prompt}
+    ]
         response = ai.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,

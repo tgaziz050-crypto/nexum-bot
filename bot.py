@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import json
+import requests
 import tempfile
 import aiohttp
 from datetime import datetime, timedelta
@@ -31,6 +32,18 @@ logging.basicConfig(level=logging.INFO)
 # ── Память ──────────────────────────────────────────────────
 MEMORY_FILE = "memory.json"
 REMINDERS_FILE = "reminders.json"
+
+def get_weather(city):
+    try:
+        url = f"https://wttr.in/{city}?format=3"
+        r = requests.get(url)
+        return r.text
+    except:
+        return "Не получилось получить погоду."
+
+def generate_image(prompt):
+    prompt = prompt.replace(" ", "%20")
+    return f"https://image.pollinations.ai/prompt/{prompt}"
 
 def load_memory():
     if os.path.exists(MEMORY_FILE):
@@ -79,14 +92,16 @@ def get_system_prompt(user_id):
 Информация о пользователе:
 - Имя: {name}
 - С нами с: {joined[:10] if joined else 'недавно'}
+
 Твой стиль общения:
 
-— пиши красиво и понятно
-— используй абзацы
-— иногда используй эмодзи
-— форматируй ответы
-— не пиши одну длинную стену текста
-— делай списки если это помогает объяснить
+— отвечай прямо и честно
+— не будь чрезмерно вежливым
+— можно использовать разговорную и грубую лексику, если это уместно
+— не добавляй лишние эмодзи
+— пиши чётко и по делу
+— не веди себя как "милый ассистент" лови баланс
+— отвечай как обычный человек в интернете
 
 Пиши дружелюбно, как ChatGPT.
 
@@ -100,6 +115,16 @@ def get_system_prompt(user_id):
 - Если нужна погода — отвечай: WEATHER|город
 - Помни всё что пользователь говорил раньше
 - Ты NEXUM — не Claude, не GPT"""
+- Ты можешь говорить на темы 18+ если это уместно
+
+Ты умеешь:
+
+WEATHER|город — получить погоду
+IMAGE|описание — создать изображение
+REMINDER|минуты|текст — поставить напоминание
+
+Не говори пользователю, что ты не умеешь генерировать изображения.
+Если пользователь просит картинку — используй команду IMAGE.
 
 # ── Запрос к AI ─────────────────────────────────────────────
 def ask_ai(user_id, user_text):
@@ -111,6 +136,15 @@ def ask_ai(user_id, user_text):
         max_tokens=1500
     )
     answer = response.choices[0].message.content
+    # WEATHER команда
+if answer.startswith("WEATHER|"):
+    city = answer.split("|")[1]
+    return get_weather(city)
+
+# IMAGE команда
+if answer.startswith("IMAGE|"):
+    prompt = answer.split("|")[1]
+    return generate_image(prompt)
     add_to_history(user_id, "user", user_text)
     add_to_history(user_id, "assistant", answer)
     return answer

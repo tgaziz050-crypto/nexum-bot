@@ -124,7 +124,7 @@ def get_system_prompt(user_id):
 # REMINDER|минуты|текст — напоминание
 
 Не говори пользователю, что ты не умеешь генерировать изображения.
-Если пользователь просит картинку — используй команду IMAGE.
+# Если пользователь просит картинку — используй команду IMAGE.
 
 # ── Запрос к AI ─────────────────────────────────────────────
 def ask_ai(user_id, user_text):
@@ -136,18 +136,18 @@ def ask_ai(user_id, user_text):
         max_tokens=1500
     )
     answer = response.choices[0].message.content
-    # WEATHER команда
-if answer.startswith("WEATHER|"):
-    city = answer.split("|")[1]
-    return get_weather(city)
-
 # IMAGE команда
 if answer.startswith("IMAGE|"):
     prompt = answer.split("|")[1]
-    return generate_image(prompt)
-    add_to_history(user_id, "user", user_text)
-    add_to_history(user_id, "assistant", answer)
-    return answer
+    url = generate_image(prompt)
+    await bot.send_photo(user_id, url)
+    return ""
+    
+    # WEATHER команда
+if answer.startswith("WEATHER|"):
+    city = answer.split("|")[1]
+    weather = get_weather(city)
+    return f"Погода в {city}:\n{weather}"
 
 # ── Поиск в интернете ────────────────────────────────────────
 async def search_web(query: str) -> str:
@@ -420,6 +420,16 @@ async def handle_sticker(message: Message):
     answers = ["Хороший стикер!", "Понял тебя!", "Что имеешь в виду?", "Напиши текстом — отвечу!"]
     import random
     await message.answer(random.choice(answers))
+
+@dp.message(F.video_note)
+async def handle_video_note(message: Message):
+
+    file = await bot.get_file(message.video_note.file_id)
+    file_path = file.file_path
+
+    video = await bot.download_file(file_path)
+
+    await message.answer("Получил видео. Анализирую...")
 
 # ── Запуск ──────────────────────────────────────────────────
 async def main():

@@ -209,8 +209,8 @@ def set_reminder(chat_id: int, minutes: int, text: str):
 # ── Обработка ответа AI ──────────────────────────────────────
 async def process_ai_response(message: Message, answer: str):
 
-    user_id = message.from_user.id
-    chat_id = message.chat.id
+user_id = message.from_user.id
+chat_id = message.chat.id
 
 if answer.startswith("IMAGE|"):
     prompt = answer.split("|",1)[1]

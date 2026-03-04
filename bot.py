@@ -212,7 +212,7 @@ async def process_ai_response(message: Message, answer: str):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    if answer.startswith("IMAGE|"):
+if answer.startswith("IMAGE|"):
     prompt = answer.split("|",1)[1]
     url = generate_image(prompt)
     await message.answer_photo(url)

@@ -119,10 +119,25 @@ def get_system_prompt(user_id):
 
 Ты умеешь:
 
-# WEATHER|город — получить погоду
-# IMAGE|описание — создать изображение
-# REMINDER|минуты|текст — напоминание
+Если пользователь просит создать изображение
+ответь строго так:
 
+IMAGE|описание картинки на английском
+
+Если пользователь спрашивает погоду
+ответь так:
+
+WEATHER|город
+
+Если пользователь хочет напоминание
+ответь так:
+
+REMINDER|минуты|текст
+
+Если нужен поиск в интернете —
+ответь так:
+
+SEARCH|запрос
 Не говори пользователю, что ты не умеешь генерировать изображения.
 # Если пользователь просит картинку — используй команду IMAGE.
 
@@ -198,10 +213,21 @@ def set_reminder(chat_id: int, minutes: int, text: str):
 
 # ── Обработка ответа AI ──────────────────────────────────────
 async def process_ai_response(message: Message, answer: str):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
+   if answer.startswith("IMAGE|"):
+    prompt = answer.split("|",1)[1]
+    url = generate_image(prompt)
+    await message.answer_photo(url)
+    return
 
-    if answer.startswith("REMINDER|"):
+user_id = message.from_user.id
+chat_id = message.chat.id
+
+elif answer.startswith("WEATHER|"):
+    city = answer.split("|",1)[1]
+    weather = get_weather(city)
+    await message.answer(weather)
+
+elif answer.startswith("REMINDER|"):
         try:
             parts = answer.split("|", 2)
             minutes = int(parts[1])

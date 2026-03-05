@@ -7,6 +7,9 @@ from aiogram.types import Message, BufferedInputFile
 from aiogram.filters import CommandStart, Command
 from groq import Groq
 
+    api_key=os.getenv("GROQ_API_KEY")
+)
+
 BOT_TOKEN = "8758082038:AAH4UvCCmYPBnp-Hb9FrIX2OgqhnXj1ur5A"
 GROQ_KEYS = [
     "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",

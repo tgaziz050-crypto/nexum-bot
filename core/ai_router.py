@@ -1,43 +1,42 @@
 import aiohttp
-import asyncio
 from config import GEMINI_KEYS, GROQ_KEYS
 
 _gemini_index = 0
 _groq_index = 0
 
 
-def get_gemini_key():
+def next_gemini():
     global _gemini_index
     key = GEMINI_KEYS[_gemini_index % len(GEMINI_KEYS)]
     _gemini_index += 1
     return key
 
 
-def get_groq_key():
+def next_groq():
     global _groq_index
     key = GROQ_KEYS[_groq_index % len(GROQ_KEYS)]
     _groq_index += 1
     return key
 
 
-async def gemini_chat(messages):
-
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+async def gemini(messages, model="gemini-2.0-flash-exp"):
 
     body = {
         "contents": [
-            {"role": "user", "parts": [{"text": m["content"]}]}
+            {
+                "role": "user",
+                "parts": [{"text": m["content"]}]
+            }
             for m in messages
         ]
     }
 
-    key = get_gemini_key()
+    key = next_gemini()
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{url}?key={key}",
-            json=body,
-        ) as r:
+        async with session.post(url, json=body) as r:
 
             if r.status != 200:
                 return None
@@ -50,9 +49,9 @@ async def gemini_chat(messages):
                 return None
 
 
-async def groq_chat(messages):
+async def groq(messages):
 
-    key = get_groq_key()
+    key = next_groq()
 
     async with aiohttp.ClientSession() as session:
 
@@ -76,16 +75,16 @@ async def groq_chat(messages):
             return data["choices"][0]["message"]["content"]
 
 
-async def ai_generate(messages):
+async def generate(messages):
 
-    # 1 пробуем Gemini
-    result = await gemini_chat(messages)
+    # 1️⃣ Gemini
+    result = await gemini(messages)
 
     if result:
         return result
 
-    # fallback Groq
-    result = await groq_chat(messages)
+    # 2️⃣ fallback Groq
+    result = await groq(messages)
 
     if result:
         return result

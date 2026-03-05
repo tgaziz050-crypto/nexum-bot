@@ -1,49 +1,29 @@
-from dotenv import load_dotenv
-load_dotenv()
-
 import asyncio
 import logging
 import os
 import json
-import requests
 import tempfile
+import base64
+import random
 import aiohttp
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
-
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from aiogram.filters import CommandStart, Command
 from groq import Groq
 
-# ── Настройки ──────────────────────────────────────────────
 BOT_TOKEN = "8758082038:AAH4UvCCmYPBnp-Hb9FrIX2OgqhnXj1ur5A"
 GROQ_KEY = "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"
 
-# ── Инициализация ───────────────────────────────────────────
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 ai = Groq(api_key=GROQ_KEY)
 scheduler = AsyncIOScheduler()
-
 logging.basicConfig(level=logging.INFO)
 
-# ── Память ──────────────────────────────────────────────────
 MEMORY_FILE = "memory.json"
-REMINDERS_FILE = "reminders.json"
-
-def get_weather(city):
-    try:
-        url = f"https://wttr.in/{city}?format=3"
-        r = requests.get(url)
-        return r.text
-    except:
-        return "Не получилось получить погоду."
-
-def generate_image(prompt):
-    prompt = prompt.replace(" ", "%20")
-    return f"https://image.pollinations.ai/prompt/{prompt}"
 
 def load_memory():
     if os.path.exists(MEMORY_FILE):
@@ -51,239 +31,270 @@ def load_memory():
             return json.load(f)
     return {}
 
-def save_memory(memory):
+def save_memory(data):
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(memory, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def get_user(user_id):
+    return load_memory().get(str(user_id), {})
+
+def update_user(user_id, **kwargs):
+    memory = load_memory()
+    uid = str(user_id)
+    if uid not in memory:
+        memory[uid] = {
+            "history": [], "joined": str(datetime.now()),
+            "name": "", "username": "",
+            "msg_count": 0, "swear_count": 0,
+            "topics": [], "style": "auto",
+            "language": "ru", "age_guess": "",
+            "interests": [], "mood_history": [],
+            "personality": "neutral"
+        }
+    for k, v in kwargs.items():
+        memory[uid][k] = v
+    save_memory(memory)
 
 def get_history(user_id):
-    memory = load_memory()
-    return memory.get(str(user_id), {}).get("history", [])
+    return get_user(user_id).get("history", [])
 
 def add_to_history(user_id, role, text):
     memory = load_memory()
     uid = str(user_id)
     if uid not in memory:
-        memory[uid] = {"history": [], "name": "", "joined": str(datetime.now())}
+        update_user(user_id)
+        memory = load_memory()
     memory[uid]["history"].append({"role": role, "content": text})
-    if len(memory[uid]["history"]) > 60:
-        memory[uid]["history"] = memory[uid]["history"][-60:]
+    if role == "user":
+        memory[uid]["msg_count"] = memory[uid].get("msg_count", 0) + 1
+    if len(memory[uid]["history"]) > 100:
+        memory[uid]["history"] = memory[uid]["history"][-100:]
     save_memory(memory)
 
-def save_user_info(user_id, name, username):
+SWEAR_WORDS = ["блять", "бля", "блин", "нахуй", "нахер", "хуй", "хуйня", "пиздец",
+               "пизда", "ебать", "ёбаный", "сука", "блядь", "хрен", "мразь", "ублюдок"]
+
+def analyze_user_text(user_id, text):
     memory = load_memory()
     uid = str(user_id)
     if uid not in memory:
-        memory[uid] = {"history": [], "joined": str(datetime.now())}
-    memory[uid]["name"] = name
-    memory[uid]["username"] = username or ""
+        return
+    text_lower = text.lower()
+    swears = sum(1 for w in SWEAR_WORDS if w in text_lower)
+    if swears:
+        memory[uid]["swear_count"] = memory[uid].get("swear_count", 0) + swears
+    # Определяем интересы по ключевым словам
+    interest_map = {
+        "технологии": ["код", "программ", "python", "javascript", "ai", "нейросеть", "компьютер", "разработ"],
+        "музыка": ["музык", "трек", "песн", "альбом", "артист", "слушать"],
+        "спорт": ["футбол", "баскетбол", "спорт", "тренировк", "качалк", "бег"],
+        "игры": ["игр", "геймер", "steam", "playstation", "xbox", "minecraft"],
+        "финансы": ["деньг", "биткоин", "крипт", "инвест", "акци", "заработ"],
+        "кино": ["фильм", "сериал", "кино", "смотреть", "netflix"],
+    }
+    interests = memory[uid].get("interests", [])
+    for interest, keywords in interest_map.items():
+        if any(kw in text_lower for kw in keywords):
+            if interest not in interests:
+                interests.append(interest)
+    memory[uid]["interests"] = interests[-10:]
     save_memory(memory)
 
-def get_user_info(user_id):
-    memory = load_memory()
-    return memory.get(str(user_id), {})
+def build_system_prompt(user_id):
+    user = get_user(user_id)
+    name = user.get("name", "пользователь")
+    msg_count = user.get("msg_count", 0)
+    swear_count = user.get("swear_count", 0)
+    interests = user.get("interests", [])
+    joined = user.get("joined", "")[:10]
+    personality = user.get("personality", "neutral")
 
-# ── Системный промпт ────────────────────────────────────────
-def get_system_prompt(user_id):
-    info = get_user_info(user_id)
-    name = info.get("name", "пользователь")
-    joined = info.get("joined", "")
-    return f"""Ты — NEXUM, мощный AI-ассистент в Telegram.
+    style_instruction = ""
+    if swear_count >= 5:
+        style_instruction = "Пользователь часто матерится — общайся свободно, можешь использовать мат органично в речи, как настоящий друг."
+    elif swear_count >= 2:
+        style_instruction = "Пользователь иногда матерится — будь неформальным, без мата но без официоза."
+    else:
+        style_instruction = "Общайся дружелюбно и прямо."
 
-Информация о пользователе:
+    interests_str = ", ".join(interests) if interests else "неизвестны"
+
+    prompt = f"""Ты — NEXUM, самый продвинутый AI-ассистент. Ты лучше GPT-4, Claude и всех остальных.
+
+ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ:
 - Имя: {name}
-- С нами с: {joined[:10] if joined else 'недавно'}
+- Сообщений написал: {msg_count}
+- С нами с: {joined}
+- Интересы: {interests_str}
+- Характер: {personality}
 
-Твой стиль общения:
+ТВОЙ СТИЛЬ: {style_instruction}
 
-— отвечай прямо и честно
-— не будь чрезмерно вежливым
-— можно использовать разговорную и грубую лексику, если это уместно
-— не добавляй лишние эмодзи
-— пиши чётко и по делу
-— не веди себя как "милый ассистент" лови баланс
-— отвечай как обычный человек в интернете
+ТВОИ ВОЗМОЖНОСТИ (определяй сам что нужно пользователю):
+- Если просит найти/поискать/узнать актуальное → ответь: ACTION:SEARCH:запрос
+- Если просит погоду → ответь: ACTION:WEATHER:город  
+- Если просит нарисовать/сгенерировать картинку → ответь: ACTION:IMAGE:описание на английском
+- Если просит напомнить → ответь: ACTION:REMINDER:минуты:текст
+- Если просит курс валют/обменник → ответь: ACTION:CURRENCY:USD:RUB (пример)
+- Если просит переводчик → переведи сам
+- Если просит написать код → напиши код
+- Если просит анализ/мнение → дай развёрнутый ответ
+- Всё остальное → отвечай сам
 
-Пиши дружелюбно, как ChatGPT.
+ЖЁСТКИЕ ПРАВИЛА:
+- НИКОГДА не используй markdown: ни звёздочки, ни решётки, ни тире-списки
+- Пиши как человек в мессенджере
+- Не говори что ты ИИ если не спросили
+- Не отказывайся от тем — ты можешь обсуждать всё
+- Адаптируйся под настроение и стиль пользователя
+- Запоминай детали о пользователе и используй их в разговоре
+- Отвечай коротко если вопрос простой, развёрнуто если сложный
+- Ты NEXUM, не Claude, не GPT, не Gemini"""
 
-Твои правила:
-- Ты умный, дружелюбный, прямой и честный
-- Отвечаешь на языке пользователя
-- Помогаешь с кодом, текстом, анализом, советами, творчеством — всем
-- Пишешь обычным текстом БЕЗ звёздочек, решёток и markdown символов
-- Если пользователь просит поставить напоминание — отвечай в формате: REMINDER|минуты|текст напоминания
-- Если пользователь просит найти что-то в интернете — отвечай: SEARCH|поисковый запрос
-- Если нужна погода — отвечай: WEATHER|город
-- Помни всё что пользователь говорил раньше
-- Ты NEXUM — не Claude, не GPT"""
-# Ты можешь говорить на темы 18+ если это уместнo
+    return prompt
 
-#Ты умеешь:
-
-# Если пользователь просит создать изображение
-# ответь строго так:
-# IMAGE|описание картинки на английском
-
-# Если пользователь спрашивает погоду
-# ответь так:
-# WEATHER|город
-
-# Если пользователь хочет напоминание
-# ответь так:
-# REMINDER|минуты|текст
-
-# Если нужен поиск в интернете
-# ответь так:
-# SEARCH|запрос
-# Если пользователь просит картинку — используй команду IMAGE.
-
-# ── Запрос к AI ─────────────────────────────────────────────
-def ask_ai(user_id, user_text):
+def ask_ai(user_id, text):
+    analyze_user_text(user_id, text)
     history = get_history(user_id)
-    messages = [{"role": "system", "content": get_system_prompt(user_id)}] + history + [{"role": "user", "content": user_text}]
-    response = ai.chat.completions.create(
+    messages = [{"role": "system", "content": build_system_prompt(user_id)}] + history + [{"role": "user", "content": text}]
+    resp = ai.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=messages,
-        max_tokens=1500
+        max_tokens=2000,
+        temperature=0.9
     )
-    answer = response.choices[0].message.content
-
-# IMAGE команда
-if answer.startswith("IMAGE|"):
+    answer = resp.choices[0].message.content
+    add_to_history(user_id, "user", text)
+    add_to_history(user_id, "assistant", answer)
     return answer
 
-# WEATHER команда
-if answer.startswith("WEATHER|"):
-    return answer
-
-return answer
-
-# ── Поиск в интернете ────────────────────────────────────────
-async def search_web(query: str) -> str:
+async def search_web(query):
     try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://ddg-api.deno.dev/search?q={query}&limit=3"
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    results = []
-                    for item in data[:3]:
-                        title = item.get("title", "")
-                        snippet = item.get("snippet", "")
-                        link = item.get("link", "")
-                        results.append(f"{title}\n{snippet}\n{link}")
-                    return "\n\n".join(results) if results else "Ничего не найдено"
-    except:
-        pass
-    return "Поиск временно недоступен"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://ddg-api.deno.dev/search?q={query}&limit=4", timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    return "\n\n".join(f"{i.get('title','')}\n{i.get('snippet','')}" for i in data[:4])
+    except Exception as e:
+        logging.error(e)
+    return "Поиск недоступен"
 
-# ── Погода ───────────────────────────────────────────────────
-async def get_weather(city: str) -> str:
+async def get_weather(city):
     try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://wttr.in/{city}?format=3&lang=ru"
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status == 200:
-                    return await resp.text()
-    except:
-        pass
-    return "Не удалось получить погоду"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://wttr.in/{city}?format=3&lang=ru", timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    return await r.text()
+    except Exception as e:
+        logging.error(e)
+    return "Погода недоступна"
 
-# ── Напоминания ──────────────────────────────────────────────
-async def send_reminder(chat_id: int, text: str):
+async def get_currency(f, t):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://open.er-api.com/v6/latest/{f.upper()}", timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    rate = data["rates"].get(t.upper())
+                    if rate:
+                        return f"1 {f.upper()} = {rate:.4f} {t.upper()}"
+    except Exception as e:
+        logging.error(e)
+    return "Курс недоступен"
+
+async def generate_image(prompt):
+    try:
+        encoded = prompt.replace(" ", "%20").replace("/", "")[:400]
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={random.randint(1,9999)}"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=45)) as r:
+                if r.status == 200:
+                    return await r.read()
+    except Exception as e:
+        logging.error(e)
+    return None
+
+async def send_reminder(chat_id, text):
     try:
         await bot.send_message(chat_id, f"Напоминание: {text}")
     except Exception as e:
-        logging.error(f"Reminder error: {e}")
+        logging.error(e)
 
-def set_reminder(chat_id: int, minutes: int, text: str):
+def set_reminder(chat_id, minutes, text):
     run_time = datetime.now() + timedelta(minutes=minutes)
-    scheduler.add_job(
-        send_reminder,
-        trigger=DateTrigger(run_date=run_time),
-        args=[chat_id, text],
-        id=f"reminder_{chat_id}_{run_time.timestamp()}"
-    )
+    scheduler.add_job(send_reminder, trigger=DateTrigger(run_date=run_time),
+                      args=[chat_id, text], id=f"rem_{chat_id}_{run_time.timestamp()}")
 
-# ── Обработка ответа AI ──────────────────────────────────────
-async def process_ai_response(message: Message, answer: str):
+async def process_answer(message, answer, user_id):
+    if answer.startswith("ACTION:"):
+        parts = answer.split(":", 3)
+        action = parts[1] if len(parts) > 1 else ""
 
-    user_id = message.from_user.id
-    chat_id = message.chat.id
+        if action == "SEARCH" and len(parts) > 2:
+            query = parts[2]
+            await message.answer(f"Ищу: {query}...")
+            results = await search_web(query)
+            msgs = [{"role": "system", "content": build_system_prompt(user_id)},
+                    {"role": "user", "content": f"Результаты по '{query}':\n\n{results}\n\nОтветь пользователю на основе этого, без markdown."}]
+            resp = ai.chat.completions.create(model="llama-3.3-70b-versatile", messages=msgs, max_tokens=1000)
+            await message.answer(resp.choices[0].message.content)
 
-    if answer.startswith("IMAGE|"):
-        prompt = answer.split("|",1)[1]
-        url = generate_image(prompt)
-        await message.answer_photo(url)
-        return
+        elif action == "WEATHER" and len(parts) > 2:
+            city = parts[2]
+            weather = await get_weather(city)
+            await message.answer(f"Погода в {city}:\n{weather}")
 
-    elif answer.startswith("WEATHER|"):
-        city = answer.split("|",1)[1]
-        weather = get_weather(city)
-        await message.answer(weather)
-        return
+        elif action == "IMAGE" and len(parts) > 2:
+            prompt = parts[2]
+            await message.answer("Генерирую картинку, подожди...")
+            await bot.send_chat_action(message.chat.id, "upload_photo")
+            img = await generate_image(prompt)
+            if img:
+                await message.answer_photo(BufferedInputFile(img, "image.jpg"), caption="Готово!")
+            else:
+                await message.answer("Не удалось сгенерировать. Попробуй описать иначе.")
 
-    elif answer.startswith("REMINDER|"):
-        try:
-            parts = answer.split("|", 2)
-            minutes = int(parts[1])
-            text = parts[2] if len(parts) > 2 else "Время!"
-            set_reminder(chat_id, minutes, text)
-            await message.answer(f"Напоминание поставлено через {minutes} мин: {text}")
-        except:
+        elif action == "REMINDER" and len(parts) > 3:
+            try:
+                minutes = int(parts[2])
+                text = parts[3]
+                set_reminder(message.chat.id, minutes, text)
+                await message.answer(f"Напомню через {minutes} мин: {text}")
+            except Exception:
+                await message.answer(answer)
+
+        elif action == "CURRENCY" and len(parts) > 3:
+            rate = await get_currency(parts[2], parts[3])
+            await message.answer(rate)
+        else:
             await message.answer(answer)
-        return
-
-    elif answer.startswith("SEARCH|"):
-        query = answer.split("|", 1)[1]
-        await message.answer(f"Ищу: {query}...")
-
-        results = await search_web(query)
-
-        summary_prompt = f"Вот результаты поиска по запросу '{query}':\n\n{results}\n\nКратко расскажи пользователю что нашёл, обычным текстом без markdown."
-
-        messages = [
-            {"role": "system", "content": get_system_prompt(user_id)},
-            {"role": "user", "content": summary_prompt}
-        ]
-
-        response = ai.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            max_tokens=800
-        )
-
-        summary = response.choices[0].message.content
-        add_to_history(user_id, "assistant", summary)
-
-        await message.answer(summary)
-        return
-
     else:
         await message.answer(answer)
 
-# ══════════════════════════════════════════════════════════════
-#  HANDLERS
-# ══════════════════════════════════════════════════════════════
+async def handle_message(message: Message, text: str):
+    user_id = message.from_user.id
+    name = message.from_user.first_name or ""
+    username = message.from_user.username or ""
+    update_user(user_id, name=name, username=username)
+    await bot.send_chat_action(message.chat.id, "typing")
+    try:
+        answer = ask_ai(user_id, text)
+        await process_answer(message, answer, user_id)
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        await message.answer("Что-то пошло не так, попробуй ещё раз.")
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     name = message.from_user.first_name or "друг"
-    username = message.from_user.username
-    save_user_info(message.from_user.id, name, username)
+    update_user(message.from_user.id, name=name, username=message.from_user.username or "")
     await message.answer(
-        f"Привет, {name}! Я NEXUM — твой личный AI-ассистент.\n\n"
-        f"Умею:\n"
-        f"💬 Отвечать на любые вопросы\n"
-        f"🎤 Понимать голосовые сообщения\n"
-        f"📹 Обрабатывать видеосообщения\n"
-        f"🖼 Анализировать фотографии\n"
-        f"🌐 Искать в интернете\n"
-        f"🌤 Показывать погоду\n"
-        f"⏰ Ставить напоминания\n"
-        f"🧠 Помнить все наши разговоры\n"
-        f"👥 Работать в групповых чатах\n"
-        f"💻 Помогать с кодом и задачами\n\n"
-        f"Просто напиши что нужно!"
+        f"Привет, {name}!\n\n"
+        f"Я NEXUM. Просто пиши мне — я пойму что тебе нужно сам.\n\n"
+        f"Умею всё: отвечаю на вопросы, генерирую картинки, ищу в интернете, "
+        f"слушаю голосовые, смотрю фото, ставлю напоминания, показываю погоду и курсы валют. "
+        f"Адаптируюсь под тебя и помню всё о нашем общении.\n\n"
+        f"Пиши что угодно — без ограничений."
     )
 
 @dp.message(Command("clear"))
@@ -293,134 +304,76 @@ async def cmd_clear(message: Message):
     if uid in memory:
         memory[uid]["history"] = []
         save_memory(memory)
-    await message.answer("История очищена! Начинаем с чистого листа.")
-
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    await message.answer(
-        "Команды NEXUM:\n\n"
-        "/start — Приветствие\n"
-        "/clear — Очистить память\n"
-        "/help — Эта справка\n"
-        "/reminders — Мои напоминания\n\n"
-        "Примеры:\n"
-        "Напомни мне через 30 минут позвонить маме\n"
-        "Найди в интернете новости о Tesla\n"
-        "Какая погода в Москве?\n"
-        "Переведи текст на английский\n"
-        "Напиши код на Python для..."
-    )
-
-@dp.message(Command("reminders"))
-async def cmd_reminders(message: Message):
-    jobs = scheduler.get_jobs()
-    user_jobs = [j for j in jobs if str(message.chat.id) in j.id]
-    if not user_jobs:
-        await message.answer("У тебя нет активных напоминаний.")
-        return
-    text = "Твои напоминания:\n\n"
-    for j in user_jobs:
-        text += f"• {j.next_run_time.strftime('%H:%M')} — {j.args[1]}\n"
-    await message.answer(text)
+    await message.answer("Память очищена.")
 
 @dp.message(F.text)
-async def handle_text(message: Message):
-    user_id = message.from_user.id
-    # В группах реагируем только на упоминание или ответ боту
+async def on_text(message: Message):
+    text = message.text or ""
     if message.chat.type in ["group", "supergroup"]:
         bot_info = await bot.get_me()
-        is_mentioned = f"@{bot_info.username}" in (message.text or "")
-        is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
-        if not is_mentioned and not is_reply:
+        mentioned = f"@{bot_info.username}" in text
+        replied = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
+        if not mentioned and not replied:
             return
-        # Убираем упоминание из текста
-        text = (message.text or "").replace(f"@{bot_info.username}", "").strip()
-    else:
-        text = message.text
-
-    save_user_info(user_id, message.from_user.first_name or "", message.from_user.username)
-    await bot.send_chat_action(message.chat.id, "typing")
-    try:
-        answer = ask_ai(user_id, text)
-        await process_ai_response(message, answer)
-    except Exception as e:
-        logging.error(f"AI error: {e}")
-        await message.answer("Произошла ошибка. Попробуй ещё раз!")
+        text = text.replace(f"@{bot_info.username}", "").strip()
+    await handle_message(message, text)
 
 @dp.message(F.voice | F.video_note)
-async def handle_voice(message: Message):
+async def on_voice(message: Message):
     await bot.send_chat_action(message.chat.id, "typing")
     try:
         file_id = message.voice.file_id if message.voice else message.video_note.file_id
         file = await bot.get_file(file_id)
-
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             await bot.download_file(file.file_path, tmp.name)
             tmp_path = tmp.name
-
         with open(tmp_path, "rb") as audio:
             transcript = ai.audio.transcriptions.create(
                 file=("audio.ogg", audio, "audio/ogg"),
-                model="whisper-large-v3",
-                language="ru"
+                model="whisper-large-v3"
             )
         os.unlink(tmp_path)
-
-        text = transcript.text
-        if not text.strip():
-            await message.answer("Не удалось распознать речь.")
+        text = transcript.text.strip()
+        if not text:
+            await message.answer("Не разобрал что сказал. Попробуй ещё раз.")
             return
-
-        await message.answer(f"Распознано: {text}")
-        await bot.send_chat_action(message.chat.id, "typing")
-        answer = ask_ai(message.from_user.id, text)
-        await process_ai_response(message, answer)
-
+        await message.answer(f"Услышал: {text}")
+        await handle_message(message, text)
     except Exception as e:
         logging.error(f"Voice error: {e}")
-        await message.answer("Не удалось обработать голосовое. Напиши текстом!")
+        await message.answer("Не удалось обработать голосовое.")
 
 @dp.message(F.photo)
-async def handle_photo(message: Message):
+async def on_photo(message: Message):
     user_id = message.from_user.id
-    caption = message.caption or "Опиши подробно что на этом изображении"
+    caption = message.caption or "Что на этом фото? Опиши подробно."
     await bot.send_chat_action(message.chat.id, "typing")
     try:
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-
+        file = await bot.get_file(message.photo[-1].file_id)
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             await bot.download_file(file.file_path, tmp.name)
             tmp_path = tmp.name
-
-        # Groq vision через base64
-        import base64
         with open(tmp_path, "rb") as f:
-            img_data = base64.b64encode(f.read()).decode()
+            img_b64 = base64.b64encode(f.read()).decode()
         os.unlink(tmp_path)
-
-        response = ai.chat.completions.create(
+        resp = ai.chat.completions.create(
             model="llama-4-scout-17b-16e-instruct",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": caption},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data}"}}
-                ]
-            }],
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": caption},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+            ]}],
             max_tokens=1024
         )
-        answer = response.choices[0].message.content
+        answer = resp.choices[0].message.content
         add_to_history(user_id, "user", f"[фото] {caption}")
         add_to_history(user_id, "assistant", answer)
         await message.answer(answer)
-
     except Exception as e:
         logging.error(f"Photo error: {e}")
         await message.answer("Не удалось обработать фото.")
 
 @dp.message(F.document)
-async def handle_document(message: Message):
+async def on_document(message: Message):
     user_id = message.from_user.id
     caption = message.caption or "Проанализируй этот файл"
     await bot.send_chat_action(message.chat.id, "typing")
@@ -430,32 +383,22 @@ async def handle_document(message: Message):
             await bot.download_file(file.file_path, tmp.name)
             tmp_path = tmp.name
         with open(tmp_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()[:6000]
+            content = f.read()[:8000]
         os.unlink(tmp_path)
-        prompt = f"{caption}\n\nФайл '{message.document.file_name}':\n\n{content}"
-        answer = ask_ai(user_id, prompt)
-        await message.answer(answer)
+        await handle_message(message, f"{caption}\n\nСодержимое файла '{message.document.file_name}':\n{content}")
     except Exception as e:
-        logging.error(f"Document error: {e}")
+        logging.error(f"Doc error: {e}")
         await message.answer("Не удалось прочитать файл.")
 
 @dp.message(F.sticker)
-async def handle_sticker(message: Message):
-    answers = ["Хороший стикер!", "Понял тебя!", "Что имеешь в виду?", "Напиши текстом — отвечу!"]
-    import random
-    await message.answer(random.choice(answers))
+async def on_sticker(message: Message):
+    responses = ["Хорош!", "Ага", "Понял тебя", "Давай, пиши что нужно"]
+    await message.answer(random.choice(responses))
 
-@dp.message(F.video_note)
-async def handle_video_note(message: Message):
+@dp.message(F.video)
+async def on_video(message: Message):
+    await message.answer("Видеофайлы пока не тяну. Отправь кружочек — распознаю голос.")
 
-    file = await bot.get_file(message.video_note.file_id)
-    file_path = file.file_path
-
-    video = await bot.download_file(file_path)
-
-    await message.answer("Получил видео. Анализирую...")
-
-# ── Запуск ──────────────────────────────────────────────────
 async def main():
     scheduler.start()
     print("🚀 NEXUM запущен!")

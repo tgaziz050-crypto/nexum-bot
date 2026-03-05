@@ -1,6 +1,5 @@
-aiogram==3.7.0
-aiohttp
-groq
-apscheduler
-python-dotenv
-pillow
+aiogram==3.13.1
+groq==0.11.0
+python-dotenv==1.0.0
+aiohttp==3.10.0
+apscheduler==3.10.4

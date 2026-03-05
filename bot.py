@@ -1849,7 +1849,7 @@ async def handle_location(message: Message):
 # ЗАПУСК
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def main():
+async def start_polling():
     """Точка входа"""
     
     init_database()

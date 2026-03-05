@@ -146,18 +146,16 @@ def ask_ai(user_id, user_text):
         max_tokens=1500
     )
     answer = response.choices[0].message.content
+
 # IMAGE команда
 if answer.startswith("IMAGE|"):
-    prompt = answer.split("|")[1]
-    url = generate_image(prompt)
-    await bot.send_photo(user_id, url)
-    return ""
-    
-    # WEATHER команда
+    return answer
+
+# WEATHER команда
 if answer.startswith("WEATHER|"):
-    city = answer.split("|")[1]
-    weather = get_weather(city)
-    return f"Погода в {city}:\n{weather}"
+    return answer
+
+return answer
 
 # ── Поиск в интернете ────────────────────────────────────────
 async def search_web(query: str) -> str:

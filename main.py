@@ -11,7 +11,7 @@ dp.include_router(router)
 
 async def main():
 
-    print("NEXUM v3 STARTED")
+    print("NEXUM AI STARTED")
 
     await dp.start_polling(bot)
 

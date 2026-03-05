@@ -1850,11 +1850,10 @@ async def handle_location(message: Message):
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def start_polling():
-    """Точка входа"""
-    
+
     init_database()
     scheduler.start()
-    
+
     logger.info("=" * 60)
     logger.info("NEXUM v2.0 Starting...")
     logger.info(f"Gemini keys: {len(GEMINI_KEYS)}")
@@ -1862,9 +1861,9 @@ async def start_polling():
     logger.info(f"ffmpeg: {'✅' if FFMPEG else '❌'}")
     logger.info(f"yt-dlp: {'✅' if YTDLP else '❌'}")
     logger.info("=" * 60)
-    
+
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(start_polling())

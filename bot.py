@@ -17,7 +17,7 @@ from aiogram.filters import CommandStart, Command
 from groq import Groq
 
 BOT_TOKEN = "8758082038:AAH4UvCCmYPBnp-Hb9FrIX2OgqhnXj1ur5A"
-GROQ_KEY = "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"
+GROQ_KEY = "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"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()

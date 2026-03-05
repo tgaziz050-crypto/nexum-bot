@@ -6,9 +6,43 @@ from config import BOT_TOKEN
 from core.ai_engine import AIEngine
 from core.memory import save, load, init_db
 
+
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
+
+# --------------------------------------------------
+# SYSTEM PROMPT
+# --------------------------------------------------
+
+SYSTEM_PROMPT = """
+Ты — NEXUM AI.
+
+Правила поведения:
+
+1. Отвечай четко и по делу
+2. Не используй поэтический стиль
+3. Не пиши художественные вступления
+4. Не придумывай факты
+5. Если не знаешь — скажи честно
+
+Формат ответа:
+
+🧠 Ответ
+(кратко и понятно)
+
+⚙️ Шаги (если нужны)
+1.
+2.
+3.
+
+💡 Совет (если уместно)
+"""
+
+
+# --------------------------------------------------
+# START
+# --------------------------------------------------
 
 @dp.message(CommandStart())
 async def start(message: Message):
@@ -18,7 +52,7 @@ async def start(message: Message):
     text = f"""
 👋 Привет, {name}!
 
-Я **NEXUM AI** — умный ассистент.
+Я **NEXUM AI** — интеллектуальный ассистент.
 
 🧠 Что я умею:
 
@@ -30,26 +64,32 @@ async def start(message: Message):
 
 ⚙️ Дополнительно:
 
-• работа в **группах**
-• помощь в **каналах**
-• **напоминания**
-• **анализ информации**
+• работа в группах  
+• помощь каналам  
+• анализ информации  
 
 💡 Просто напиши вопрос или задачу.
-
-Например:
-
-• "Объясни чёрные дыры просто"  
-• "Напиши код Python для бота"  
-• "Дай идеи для стартапа"
 """
 
     await message.answer(text)
-    await message.answer(text)
+
+
+# --------------------------------------------------
+# VIDEO NOTE
+# --------------------------------------------------
+
+@dp.message(F.video_note)
+async def video_note(message: Message):
+
     await message.answer(
-        "NEXUM V4 активирован."
+        "🎥 Я получил видео.\n\n"
+        "Сейчас у меня нет модуля анализа видео."
     )
 
+
+# --------------------------------------------------
+# CHAT
+# --------------------------------------------------
 
 @dp.message(F.text)
 async def chat(message: Message):
@@ -57,43 +97,28 @@ async def chat(message: Message):
     uid = message.from_user.id
     text = message.text
 
+    if text.startswith("/"):
+        return
+
     save(uid, "user", text)
 
     history = load(uid)
 
-messages = [
-{
-"role": "system",
-"content": """
-Ты — NEXUM AI.
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
 
-Правила:
-
-1. Отвечай понятно.
-2. Не пиши поэтические тексты.
-3. Не придумывай факты.
-4. Если у тебя нет данных — скажи об этом.
-5. Не говори что видишь изображение или видео, если анализ не был выполнен.
-
-Формат ответа:
-
-🧠 Ответ
-
-(краткое объяснение)
-
-⚙️ Шаги (если нужны)
-
-1.
-2.
-3.
-
-💡 Совет (если уместно)
-"""
-}
-]
     messages += history
 
-    messages.append({"role": "user", "content": text})
+    messages.append({
+        "role": "user",
+        "content": text
+    })
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
 
     answer = await AIEngine.generate(messages)
 
@@ -102,17 +127,12 @@ messages = [
     await message.answer(answer)
 
 
+# --------------------------------------------------
+# START BOT
+# --------------------------------------------------
+
 async def start_bot():
 
     init_db()
 
     await dp.start_polling(bot)
-
-@dp.message(F.video_note)
-async def video_note(message: Message):
-
-    await message.answer(
-        "🎥 Я получил видео.\n\n"
-        "Сейчас у меня нет модуля анализа видео.\n"
-        "Но я могу добавить его позже."
-    )

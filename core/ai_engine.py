@@ -8,7 +8,7 @@ class AIEngine:
     groq_index = 0
 
     @staticmethod
-    def get_next_gemini():
+    def next_gemini():
 
         key = GEMINI_KEYS[AIEngine.gemini_index]
 
@@ -20,7 +20,7 @@ class AIEngine:
         return key
 
     @staticmethod
-    def get_next_groq():
+    def next_groq():
 
         key = GROQ_KEYS[AIEngine.groq_index]
 
@@ -36,25 +36,16 @@ class AIEngine:
 
         for _ in range(len(GEMINI_KEYS)):
 
-            key = AIEngine.get_next_gemini()
+            key = AIEngine.next_gemini()
 
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
 
-            contents = []
-
-            for m in messages:
-
-                role = "user"
-
-                if m["role"] == "assistant":
-                    role = "model"
-
-                contents.append({
-                    "role": role,
-                    "parts": [{"text": m["content"]}]
-                })
-
-            body = {"contents": contents}
+            body = {
+                "contents": [
+                    {"parts": [{"text": m["content"]}]}
+                    for m in messages
+                ]
+            }
 
             try:
 
@@ -68,9 +59,6 @@ class AIEngine:
 
                             return data["candidates"][0]["content"]["parts"][0]["text"]
 
-                        else:
-                            continue
-
             except:
                 continue
 
@@ -81,7 +69,7 @@ class AIEngine:
 
         for _ in range(len(GROQ_KEYS)):
 
-            key = AIEngine.get_next_groq()
+            key = AIEngine.next_groq()
 
             try:
 
@@ -105,9 +93,6 @@ class AIEngine:
 
                             return data["choices"][0]["message"]["content"]
 
-                        else:
-                            continue
-
             except:
                 continue
 
@@ -116,16 +101,14 @@ class AIEngine:
     @staticmethod
     async def generate(messages):
 
-        # сначала Gemini
         r = await AIEngine.gemini(messages)
 
         if r:
             return r
 
-        # потом Groq
         r = await AIEngine.groq(messages)
 
         if r:
             return r
 
-        return "Все AI сейчас перегружены."
+        return "AI перегружен."

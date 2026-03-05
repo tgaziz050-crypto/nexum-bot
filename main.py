@@ -1,12 +1,5 @@
-import asyncio
-from telegram.bot import dp, bot
-from core.memory import init_db
-
-
-async def main():
-    init_db()
-    await dp.start_polling(bot)
-
+from telegram.bot import start_polling
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+    asyncio.run(start_polling())

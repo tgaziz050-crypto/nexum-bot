@@ -1,22 +1,30 @@
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-GEMINI_KEYS = [k for k in [
+# Gemini keys
+GEMINI_KEYS = [
     os.getenv("GEMINI_1"),
     os.getenv("GEMINI_2"),
-] if k]
+    os.getenv("GEMINI_3"),
+    os.getenv("GEMINI_4"),
+    os.getenv("GEMINI_5"),
+    os.getenv("GEMINI_6"),
+]
 
-GROQ_KEYS = [k for k in [
+# Groq keys
+GROQ_KEYS = [
     os.getenv("GROQ_1"),
     os.getenv("GROQ_2"),
-] if k]
+    os.getenv("GROQ_3"),
+    os.getenv("GROQ_4"),
+    os.getenv("GROQ_5"),
+    os.getenv("GROQ_6"),
+]
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
-SAFETY_MODE = os.getenv("SAFETY_MODE", "on").lower() == "on"
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID")) if os.getenv("ADMIN_USER_ID") else None
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")

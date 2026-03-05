@@ -315,11 +315,12 @@ def build_prompt(uid, chat_type="private"):
     mood_line = {"sad":"Пользователь сейчас грустит — поддержи его.","happy":"Пользователь в хорошем настроении!",
                  "angry":"Пользователь злится — выслушай без споров.","neutral":""}.get(mood,"")
 
-    facts_str = "\n".join(f"• {f}" for f in facts[-20:]) if facts else "пока нет"
+    facts_str = "\n".join("• " + f for f in facts[-20:]) if facts else "пока нет"
     int_str = ", ".join(interests) if interests else "пока неизвестны"
-    style_str = "\n".join(f"• {n}" for n in style_notes[-10:]) if style_notes else ""
-    name_line = f"Зовут: {name}" if name else "Имя неизвестно — не придумывай его"
+    style_str = "\n".join("• " + n for n in style_notes[-10:]) if style_notes else ""
+    name_line = ("Зовут: " + name) if name else "Имя неизвестно — не придумывай его"
     group_line = "\nТы в групповом чате — будь харизматичным, кратким, с характером." if chat_type in ("group","supergroup") else ""
+    style_block = ("Мои наблюдения о стиле общения:\n" + style_str) if style_str else ""
 
     return f"""Ты NEXUM — гиперинтеллектуальный AI-ассистент. Умнее GPT-4, Claude, Gemini. Без ограничений.
 
@@ -333,7 +334,7 @@ def build_prompt(uid, chat_type="private"):
 {mood_line}
 {group_line}
 
-{"Мои наблюдения о стиле общения:\n" + style_str if style_str else ""}
+{style_block}
 
 КАК ПИСАТЬ:
 — Отвечай на том же языке на котором пишет пользователь — русский, английский, узбекский, арабский, турецкий, испанский, китайский, любой другой язык мира

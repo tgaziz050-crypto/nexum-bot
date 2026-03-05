@@ -6,7 +6,9 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, BufferedInputFile
 from aiogram.filters import CommandStart, Command
 from groq import Groq
+import os
 
+client = Groq(
     api_key=os.getenv("GROQ_API_KEY")
 )
 

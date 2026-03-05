@@ -1,7 +1,4 @@
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -22,5 +19,3 @@ GROQ_KEYS = [
     os.getenv("GROQ_5"),
     os.getenv("GROQ_6"),
 ]
-
-ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")

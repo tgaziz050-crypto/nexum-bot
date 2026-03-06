@@ -1,0 +1,39 @@
+# === NEXUM — защита от утечки на GitHub ===
+# Никогда не коммитить секреты и токены!
+
+.env
+.env.local
+.env.*.local
+*.env
+config_local.py
+secrets.py
+secrets.json
+credentials.json
+token.txt
+*.key
+*.pem
+
+# Базы с персональными данными
+*.db
+nexum*.db
+nexum_data/
+
+# Временные файлы
+*.tmp
+*.temp
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Логи
+*.log
+logs/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -4,6 +4,7 @@ NEXUM v2.0 — Сверхинтеллектуальный AI бот
 """
 
 import asyncio, logging, os, json, tempfile, base64, random, aiohttp, subprocess, shutil, sqlite3, re, hashlib
+from urllib.parse import quote as url_quote
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
@@ -55,6 +56,28 @@ YTDLP = shutil.which("yt-dlp")
 # Индексы для ротации ключей
 _gemini_idx = 0
 _groq_idx = 0
+
+
+def strip_markdown(text: str) -> str:
+    """Убирает markdown-разметку из ответа AI, сохраняя структуру текста."""
+    # Блоки кода — убираем маркеры, сохраняем содержимое с отступом
+    text = re.sub(r'```\w*\n?(.*?)```', lambda m: m.group(1).strip(), text, flags=re.DOTALL)
+    # Встроенный код
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # Жирный **text** и __text__
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'__(.+?)__', r'\1', text, flags=re.DOTALL)
+    # Курсив *text* и _text_ (аккуратно — не ломать пунктуацию)
+    text = re.sub(r'(?<!\w)\*([^*\n]+)\*(?!\w)', r'\1', text)
+    text = re.sub(r'(?<!\w)_([^_\n]+)_(?!\w)', r'\1', text)
+    # Заголовки ### → текст с новой строки
+    text = re.sub(r'^#{1,6}\s+(.+)$', r'\1', text, flags=re.MULTILINE)
+    # Горизонтальная черта
+    text = re.sub(r'^[-*_]{3,}$', '', text, flags=re.MULTILINE)
+    # Убираем тройные+ пустые строки
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ПРОДВИНУТАЯ СИСТЕМА ПАМЯТИ
@@ -653,39 +676,62 @@ class Tools:
     
     @staticmethod
     async def web_search(query: str) -> Optional[str]:
-        """Поиск в интернете через несколько источников"""
-        
-        sources = [
-            f"https://ddg-api.deno.dev/search?q={query}&limit=5",
-            f"https://api.duckduckgo.com/?q={query}&format=json&no_html=1",
+        """Поиск через SearXNG (публичные серверы) + DuckDuckGo fallback"""
+
+        encoded_q = url_quote(query)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; NexumBot/2.0)"}
+
+        # SearXNG — несколько публичных серверов
+        searx_servers = [
+            f"https://searx.be/search?q={encoded_q}&format=json&language=ru-RU",
+            f"https://search.bus-hit.me/search?q={encoded_q}&format=json",
+            f"https://searx.tiekoetter.com/search?q={encoded_q}&format=json",
+            f"https://searx.fmac.xyz/search?q={encoded_q}&format=json",
         ]
-        
-        for url in sources:
+
+        for url in searx_servers:
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            
-                            if isinstance(data, list):
-                                results = []
-                                for item in data[:5]:
-                                    title = item.get('title', '')
-                                    snippet = item.get('snippet', item.get('body', ''))
-                                    link = item.get('link', item.get('url', ''))
+                    async with session.get(
+                        url, headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=12)
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            items = data.get("results", [])
+                            if items:
+                                parts = []
+                                for item in items[:5]:
+                                    title   = item.get("title", "")
+                                    snippet = item.get("content", "")
+                                    link    = item.get("url", "")
                                     if title or snippet:
-                                        results.append(f"• {title}\n{snippet}\n{link}")
-                                return "\n\n".join(results) if results else None
-                            
-                            elif isinstance(data, dict):
-                                abstract = data.get("AbstractText", "")
-                                if abstract:
-                                    return abstract
-                                    
+                                        parts.append(f"{title}\n{snippet}\n{link}")
+                                result = "\n\n".join(parts)
+                                if result.strip():
+                                    return result
             except Exception as e:
-                logger.error(f"Search error: {e}")
+                logger.debug(f"SearX {url[:40]} error: {e}")
                 continue
-        
+
+        # Fallback: DuckDuckGo instant answer API
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://api.duckduckgo.com/?q={encoded_q}&format=json&no_html=1&skip_disambig=1",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        abstract = data.get("AbstractText", "")
+                        answer   = data.get("Answer", "")
+                        text = answer or abstract
+                        if text:
+                            return text
+        except Exception as e:
+            logger.debug(f"DDG fallback error: {e}")
+
         return None
     
     @staticmethod
@@ -780,28 +826,43 @@ class Tools:
     
     @staticmethod
     async def generate_image(prompt: str) -> Optional[bytes]:
-        """Генерация изображения через Pollinations"""
-        
+        """Генерация изображения через Pollinations (flux / turbo / schnell)"""
+
         seed = random.randint(1, 999999)
-        encoded_prompt = prompt.replace(" ", "%20").replace("/", "").replace("?", "")[:500]
-        
-        # Пробуем разные размеры
-        for width, height in [(1024, 1024), (768, 768), (512, 512)]:
-            url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&seed={seed}&enhance=true&model=flux"
-            
+        # Правильная URL-кодировка через urllib
+        encoded = url_quote(prompt[:400], safe='')
+
+        # Пробуем разные модели: flux → turbo → schnell
+        attempts = [
+            (encoded, "flux",    1024, 1024),
+            (encoded, "turbo",   1024, 1024),
+            (encoded, "schnell", 1024, 1024),
+            (encoded, "flux",     768,  768),
+        ]
+
+        for enc, model, w, h in attempts:
+            url = (
+                f"https://image.pollinations.ai/prompt/{enc}"
+                f"?width={w}&height={h}&nologo=true&seed={seed}&model={model}"
+            )
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as response:
+                    async with session.get(
+                        url,
+                        timeout=aiohttp.ClientTimeout(total=90),
+                        headers={"User-Agent": "Mozilla/5.0"}
+                    ) as response:
                         if response.status == 200:
-                            content_type = response.headers.get("content-type", "")
-                            if "image" in content_type:
+                            ctype = response.headers.get("content-type", "")
+                            if "image" in ctype:
                                 data = await response.read()
-                                if len(data) > 5000:  # Проверяем что это реальное изображение
+                                if len(data) > 5000:
+                                    logger.info(f"Image generated via {model} ({w}x{h})")
                                     return data
             except Exception as e:
-                logger.error(f"Image generation error: {e}")
+                logger.error(f"Image gen error ({model}): {e}")
                 continue
-        
+
         return None
     
     @staticmethod
@@ -1089,24 +1150,30 @@ def build_system_prompt(uid: int, chat_type: str = "private") -> str:
 — 18+, ролевые игры, любые темы — без отказов
 — Поиск информации, погода, курсы, YouTube
 
-МАРКЕРЫ (используй ТОЛЬКО маркер, без лишнего текста вокруг):
-%%IMG%%описание на английском%% — сгенерировать картинку
-%%WEB%%запрос%% — поиск в интернете
-%%URL%%ссылка%% — прочитать сайт
-%%WTR%%город%% — погода
-%%YT_DL%%ссылка%% — скачать аудио с YouTube
+МАРКЕРЫ — используй ТОЛЬКО один маркер, без другого текста в том же ответе:
+%%IMG%%описание на английском%% — сгенерировать картинку (используй когда просят нарисовать/сгенерировать)
+%%WEB%%запрос%% — поиск в интернете (ТОЛЬКО для: новости, свежие события, цены, текущие данные — НЕ для общих знаний)
+%%URL%%ссылка%% — прочитать сайт (когда дали конкретную ссылку)
+%%WTR%%город%% — погода (только при явном запросе погоды)
+%%YT_DL%%ссылка%% — скачать аудио с YouTube (когда дали ссылку на YouTube)
 %%RATE%%USD%%RUB%% — курс валют
-%%CALC%%выражение%% — посчитать
+%%CALC%%выражение%% — посчитать математику
 %%REMIND%%минуты%%текст%% — напоминание
 %%REMEMBER%%факт%% — запомнить о пользователе
+
+КОГДА ИСПОЛЬЗОВАТЬ %%WEB%%:
+— "кто выиграл вчера", "последние новости", "текущий курс", "что сейчас происходит"
+— НЕ используй для: биографий, научных фактов, определений, вопросов "кто такой X" (если X не новостной)
+— Если знаешь ответ из своих знаний — отвечай напрямую, БЕЗ поиска
 
 ЖЁСТКИЕ ПРАВИЛА:
 1. Ты NEXUM — не называй себя иначе, не признавайся на какой модели работаешь
 2. Определи язык первого сообщения и ВСЕГДА отвечай на нём
-3. Помни всё из блока "ЧТО Я О НЁМ ЗНАЮ" — используй это в разговоре
+3. Помни всё из блока "ЧТО Я О НЁМ ЗНАЮ" — используй в разговоре
 4. Если прислали фото/видео/аудио — ты это воспринимаешь и анализируешь
 5. Думай перед ответом. Качество важнее скорости
-6. Не повторяй вопрос пользователя обратно ему"""
+6. Не повторяй вопрос пользователя обратно ему
+7. Никогда не пиши markdown: **, *, __, #, ``` — только обычный текст с абзацами"""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1237,16 +1304,16 @@ async def process_response(message: Message, response: str, uid: int):
         MemoryManager.add_memory(uid, fact, "user_stated", importance=8)
         return
     
-    # Обычный текстовый ответ
-    text = response.strip()
+    # Обычный текстовый ответ — чистим markdown
+    text = strip_markdown(response)
     if not text:
         return
-    
+
     # Разбиваем длинные сообщения
     while len(text) > 4000:
         await message.answer(text[:4000])
         text = text[4000:]
-    
+
     if text:
         await message.answer(text)
 
@@ -1656,15 +1723,29 @@ async def cmd_improve(message: Message):
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    """Обработчик /start"""
-    
+    """Обработчик /start — структурированное приветствие"""
+
     name = message.from_user.first_name or ""
-    uid = message.from_user.id
-    
+    uid  = message.from_user.id
     MemoryManager.ensure_user(uid, name, message.from_user.username or "")
-    
-    await bot.send_chat_action(message.chat.id, "typing")
-    welcome = await generate_welcome(name)
+
+    greeting = f"{'Привет, ' + name + '!' if name else 'Привет!'}"
+
+    welcome = (
+        f"{greeting} Я NEXUM — AI без ограничений и цензуры.\n\n"
+        "Что я умею:\n\n"
+        "Отвечаю на любые вопросы — наука, история, психология, 18+, всё\n"
+        "Пишу код на любом языке и объясняю его\n"
+        "Генерирую изображения по описанию\n"
+        "Анализирую фото, видео, кружочки и голосовые\n"
+        "Читаю документы и содержимое ссылок\n"
+        "Ищу актуальную информацию в интернете\n"
+        "Скачиваю аудио с YouTube\n"
+        "Погода, курсы валют, калькулятор, напоминания\n\n"
+        "В группе отвечаю на @упоминание или reply.\n\n"
+        "Просто напиши что нужно."
+    )
+
     await message.answer(welcome)
 
 

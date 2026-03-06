@@ -37,3 +37,11 @@ logs/
 .vscode/
 *.swp
 *.swo
+
+# Лишние/резервные версии бота (оставляем только Для Claude/)
+bot (31).py
+nexum.py
+nexum_ai.py
+nexum_full.py
+nexum_pro.py
+main.py

@@ -1,32 +1,30 @@
 """
-NEXUM v3.0 — МАКСИМАЛЬНО ПРОКАЧАННЫЙ AI БОТ
-Новое: Claude API, DeepSeek API, SUNO музыка, inline-кнопки, скачивание с любых источников,
-WAV формат, статистика группы, выбор голоса, генерация видео, мультиязычность без акцента,
-подключение к приложениям, и ещё куча новых функций.
+NEXUM v4.0 — АБСОЛЮТНЫЙ AI БОТ БЕЗ ГРАНИЦ
+Полностью переработан: исправлены все ошибки, добавлены функции управления группой/каналом,
+социальные сети, удаление сообщений, аналитика, авторасписание, Grok API, самосовершенствование.
 """
 
-import asyncio, logging, os, json, tempfile, base64, random, aiohttp, subprocess, shutil, sqlite3, re, hashlib
+import asyncio, logging, os, json, tempfile, base64, random, aiohttp, subprocess, shutil, sqlite3, re, time
 from urllib.parse import quote as url_quote
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
-from dataclasses import dataclass, field
-from enum import Enum
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
-    Message, BufferedInputFile, FSInputFile,
-    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton,
+    CallbackQuery, ChatPermissions
 )
 from aiogram.filters import CommandStart, Command
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatMemberStatus
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# КОНФИГУРАЦИЯ — ВСЕ КЛЮЧИ
+# ВСЕ API КЛЮЧИ
 # ══════════════════════════════════════════════════════════════════════════════
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8758082038:AAH4UvCCmYPBnp-Hb9FrIX2OgqhnXj1ur5A")
@@ -62,6 +60,13 @@ DEEPSEEK_KEYS = [k for k in [
     os.getenv("DEEPSEEK_6", "sk-bf18eb9208f14617b883a0aa4d05c5b0"),
 ] if k]
 
+# Grok / xAI ключи
+GROK_KEYS = [k for k in [
+    os.getenv("GROK_1", "sk-MXZl1hDZGmEN4slJhehF3OFWqarKHYlL4Y1MPo8rCtjlnrNf"),
+    os.getenv("GROK_2", "sk-KZ09Pva3G0Lq8hoYIIl6LP0ld5MR7wV05YQgK3RThxvGStwG"),
+    os.getenv("GROK_3", "sk-F9gQGwwdPQ3bn69ua29mCAv4B3LmUr0Bdsy4sTvwgxOwoCBY"),
+] if k]
+
 SUNO_KEYS = [k for k in [
     os.getenv("SUNO_1", "6c5ae95102276cd5e34e1dcd51bf2da3"),
     os.getenv("SUNO_2", "014f2e12c5fcbec3ee41b67eddcbe180"),
@@ -72,22 +77,13 @@ dp = Dispatcher()
 scheduler = AsyncIOScheduler()
 
 FFMPEG = shutil.which("ffmpeg")
-YTDLP  = shutil.which("yt-dlp")
+YTDLP = shutil.which("yt-dlp")
 
-_gemini_idx   = 0
-_groq_idx     = 0
-_claude_idx   = 0
-_deepseek_idx = 0
-_suno_idx     = 0
+_idx = {"gemini": 0, "groq": 0, "claude": 0, "deepseek": 0, "grok": 0, "suno": 0}
 
-# Голоса пользователей — user_id -> voice_name
-USER_VOICES: Dict[int, str] = {}
-
-# Доступные голоса edge-tts (наиболее живые)
 EDGE_TTS_VOICES = {
     "ru_male":    "ru-RU-DmitryNeural",
     "ru_female":  "ru-RU-SvetlanaNeural",
-    "ru_male2":   "ru-RU-DmitryNeural",
     "en_male":    "en-US-GuyNeural",
     "en_female":  "en-US-JennyNeural",
     "en_male2":   "en-US-EricNeural",
@@ -103,6 +99,23 @@ EDGE_TTS_VOICES = {
     "ko_female":  "ko-KR-SunHiNeural",
 }
 
+PENDING_ACTIONS: Dict[str, Dict] = {}
+CHANNEL_PROFILES: Dict[int, Dict] = {}
+
+def get_key(provider: str) -> Optional[str]:
+    keys_map = {"gemini": GEMINI_KEYS, "groq": GROQ_KEYS, "claude": CLAUDE_KEYS,
+                "deepseek": DEEPSEEK_KEYS, "grok": GROK_KEYS, "suno": SUNO_KEYS}
+    keys = keys_map.get(provider, [])
+    if not keys: return None
+    return keys[_idx[provider] % len(keys)]
+
+def rotate(provider: str):
+    keys_map = {"gemini": GEMINI_KEYS, "groq": GROQ_KEYS, "claude": CLAUDE_KEYS,
+                "deepseek": DEEPSEEK_KEYS, "grok": GROK_KEYS, "suno": SUNO_KEYS}
+    keys = keys_map.get(provider, [])
+    if keys:
+        _idx[provider] = (_idx[provider] + 1) % len(keys)
+
 def strip_markdown(text: str) -> str:
     text = re.sub(r'```\w*\n?(.*?)```', lambda m: m.group(1).strip(), text, flags=re.DOTALL)
     text = re.sub(r'`([^`]+)`', r'\1', text)
@@ -116,2662 +129,1992 @@ def strip_markdown(text: str) -> str:
     return text.strip()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# БАЗА ДАННЫХ v3.0
+# БАЗА ДАННЫХ
 # ══════════════════════════════════════════════════════════════════════════════
 
-DB_PATH = "nexum_v3.db"
-
+DB_PATH = "nexum_v4.db"
 
 def init_database():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            uid INTEGER PRIMARY KEY,
-            name TEXT DEFAULT '',
-            username TEXT DEFAULT '',
-            first_seen TEXT,
-            last_seen TEXT,
-            total_messages INTEGER DEFAULT 0,
-            language TEXT DEFAULT 'ru',
-            timezone TEXT DEFAULT 'UTC+5',
-            voice TEXT DEFAULT 'auto',
-            trust_level INTEGER DEFAULT 0,
-            personality_profile TEXT DEFAULT '{}'
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid INTEGER,
-            chat_id INTEGER DEFAULT 0,
-            role TEXT,
-            content TEXT,
-            content_type TEXT DEFAULT 'text',
-            tokens_estimate INTEGER DEFAULT 0,
-            emotion TEXT DEFAULT 'neutral',
-            topic TEXT DEFAULT '',
-            timestamp TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (uid) REFERENCES users(uid)
-        )
-    """)
-
-    try:
-        c.execute("SELECT chat_id FROM conversations LIMIT 1")
-    except sqlite3.OperationalError:
-        c.execute("ALTER TABLE conversations ADD COLUMN chat_id INTEGER DEFAULT 0")
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS memories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid INTEGER,
-            category TEXT,
-            fact TEXT,
-            importance INTEGER DEFAULT 5,
-            confidence REAL DEFAULT 1.0,
-            source TEXT DEFAULT 'conversation',
-            created_at TEXT DEFAULT (datetime('now')),
-            last_referenced TEXT,
-            reference_count INTEGER DEFAULT 0,
-            FOREIGN KEY (uid) REFERENCES users(uid)
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS preferences (
-            uid INTEGER,
-            key TEXT,
-            value TEXT,
-            updated_at TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (uid, key),
-            FOREIGN KEY (uid) REFERENCES users(uid)
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS chat_context (
-            uid INTEGER,
-            chat_id INTEGER,
-            current_topic TEXT DEFAULT '',
-            mood TEXT DEFAULT 'neutral',
-            last_intent TEXT DEFAULT '',
-            pending_action TEXT DEFAULT '',
-            session_start TEXT,
-            context_data TEXT DEFAULT '{}',
-            PRIMARY KEY (uid, chat_id)
-        )
-    """)
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS chat_summaries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid INTEGER,
-            chat_id INTEGER,
-            summary TEXT,
-            messages_covered INTEGER DEFAULT 0,
-            last_message_id INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (uid) REFERENCES users(uid)
-        )
-    """)
-
-    # Статистика группы
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS group_stats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            uid INTEGER,
-            username TEXT DEFAULT '',
-            name TEXT DEFAULT '',
-            messages INTEGER DEFAULT 0,
-            words INTEGER DEFAULT 0,
-            media INTEGER DEFAULT 0,
-            last_active TEXT,
-            first_seen TEXT
-        )
-    """)
-
-    # Уведомления
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid INTEGER,
-            chat_id INTEGER,
-            text TEXT,
-            run_at TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        )
-    """)
-
-    c.execute("CREATE INDEX IF NOT EXISTS idx_conv_uid_chat ON conversations(uid, chat_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_conv_id ON conversations(id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_mem_uid ON memories(uid)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_summaries_uid_chat ON chat_summaries(uid, chat_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_group_stats ON group_stats(chat_id, uid)")
-
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        uid INTEGER PRIMARY KEY, name TEXT DEFAULT '', username TEXT DEFAULT '',
+        first_seen TEXT, last_seen TEXT, total_messages INTEGER DEFAULT 0,
+        language TEXT DEFAULT 'ru', voice TEXT DEFAULT 'auto', trust_level INTEGER DEFAULT 0
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, chat_id INTEGER DEFAULT 0,
+        role TEXT, content TEXT, emotion TEXT DEFAULT 'neutral',
+        timestamp TEXT DEFAULT (datetime('now'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, category TEXT,
+        fact TEXT, importance INTEGER DEFAULT 5, created_at TEXT DEFAULT (datetime('now'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS chat_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, chat_id INTEGER,
+        summary TEXT, last_message_id INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS group_stats (
+        chat_id INTEGER, uid INTEGER, username TEXT DEFAULT '', name TEXT DEFAULT '',
+        messages INTEGER DEFAULT 0, words INTEGER DEFAULT 0, media INTEGER DEFAULT 0,
+        voice_msgs INTEGER DEFAULT 0, stickers INTEGER DEFAULT 0,
+        last_active TEXT, first_seen TEXT,
+        PRIMARY KEY (chat_id, uid)
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS group_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, uid INTEGER,
+        message_id INTEGER, text TEXT DEFAULT '', msg_type TEXT DEFAULT 'text',
+        timestamp TEXT DEFAULT (datetime('now'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS channel_profiles (
+        chat_id INTEGER PRIMARY KEY, title TEXT, analysis TEXT DEFAULT '',
+        style TEXT DEFAULT '', posting_schedule TEXT DEFAULT '',
+        last_post TEXT, created_at TEXT DEFAULT (datetime('now'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS scheduled_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER,
+        cron_expr TEXT, template TEXT, last_run TEXT,
+        active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now'))
+    )""")
+    for idx in [
+        "CREATE INDEX IF NOT EXISTS idx_conv_uid_chat ON conversations(uid, chat_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mem_uid ON memories(uid)",
+        "CREATE INDEX IF NOT EXISTS idx_group_stats ON group_stats(chat_id)",
+        "CREATE INDEX IF NOT EXISTS idx_group_msgs ON group_messages(chat_id, timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_sched ON scheduled_posts(chat_id, active)",
+    ]:
+        c.execute(idx)
     conn.commit()
     conn.close()
-    logger.info("Database v3.0 initialized")
+    logger.info("Database v4.0 initialized")
 
 
-class MemoryManager:
-    CATEGORIES = {
-        'identity':      ['имя', 'возраст', 'пол', 'день рождения', 'зовут'],
-        'location':      ['живу', 'город', 'страна', 'адрес', 'переехал'],
-        'work':          ['работаю', 'работа', 'профессия', 'должность', 'компания'],
-        'education':     ['учусь', 'университет', 'школа', 'курс', 'диплом'],
-        'interests':     ['люблю', 'нравится', 'хобби', 'увлекаюсь', 'интересует'],
-        'relationships': ['жена', 'муж', 'девушка', 'парень', 'дети', 'родители'],
-        'preferences':   ['предпочитаю', 'не люблю', 'ненавижу', 'обожаю'],
-        'goals':         ['хочу', 'мечтаю', 'планирую', 'цель', 'собираюсь'],
-        'problems':      ['проблема', 'болит', 'устал', 'достало', 'не могу'],
-        'skills':        ['умею', 'могу', 'знаю', 'опыт', 'навык'],
-    }
+class DB:
+    @staticmethod
+    def conn():
+        return sqlite3.connect(DB_PATH)
 
     @staticmethod
-    def ensure_user(uid: int, name: str = "", username: str = ""):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        now = datetime.now().isoformat()
-        c.execute("SELECT uid FROM users WHERE uid = ?", (uid,))
-        if c.fetchone():
-            c.execute("""
-                UPDATE users SET last_seen = ?,
-                name = COALESCE(NULLIF(?, ''), name),
-                username = COALESCE(NULLIF(?, ''), username)
-                WHERE uid = ?
-            """, (now, name, username, uid))
-        else:
-            c.execute("""
-                INSERT INTO users (uid, name, username, first_seen, last_seen)
-                VALUES (?, ?, ?, ?, ?)
+    def ensure_user(uid, name="", username=""):
+        with DB.conn() as conn:
+            now = datetime.now().isoformat()
+            conn.execute("""INSERT INTO users(uid,name,username,first_seen,last_seen)
+                VALUES(?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET
+                last_seen=excluded.last_seen,
+                name=CASE WHEN excluded.name!='' THEN excluded.name ELSE name END,
+                username=CASE WHEN excluded.username!='' THEN excluded.username ELSE username END
             """, (uid, name, username, now, now))
-        conn.commit()
-        conn.close()
 
     @staticmethod
-    def get_user(uid: int) -> Dict:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE uid = ?", (uid,))
-        user_row = c.fetchone()
-        if not user_row:
-            conn.close()
-            return {}
-        user = dict(user_row)
-        c.execute("SELECT category, fact, importance FROM memories WHERE uid = ? ORDER BY importance DESC, created_at DESC", (uid,))
-        user['memories'] = [dict(row) for row in c.fetchall()]
-        c.execute("SELECT key, value FROM preferences WHERE uid = ?", (uid,))
-        user['preferences'] = {row['key']: row['value'] for row in c.fetchall()}
-        conn.close()
-        return user
+    def get_user(uid):
+        with DB.conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
+            if not row: return {}
+            u = dict(row)
+            u['memories'] = [dict(r) for r in conn.execute(
+                "SELECT * FROM memories WHERE uid=? ORDER BY importance DESC", (uid,)).fetchall()]
+            return u
 
     @staticmethod
-    def get_user_voice(uid: int) -> str:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT voice FROM users WHERE uid = ?", (uid,))
-        row = c.fetchone()
-        conn.close()
-        return row[0] if row else "auto"
+    def get_voice(uid):
+        with DB.conn() as conn:
+            r = conn.execute("SELECT voice FROM users WHERE uid=?", (uid,)).fetchone()
+            return r[0] if r else "auto"
 
     @staticmethod
-    def set_user_voice(uid: int, voice: str):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("UPDATE users SET voice = ? WHERE uid = ?", (voice, uid))
-        conn.commit()
-        conn.close()
+    def set_voice(uid, voice):
+        with DB.conn() as conn:
+            conn.execute("UPDATE users SET voice=? WHERE uid=?", (voice, uid))
 
     @staticmethod
-    def get_chat_context(uid: int, chat_id: int) -> Dict:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute("SELECT * FROM chat_context WHERE uid = ? AND chat_id = ?", (uid, chat_id))
-        row = c.fetchone()
-        conn.close()
-        return dict(row) if row else {'mood': 'neutral', 'current_topic': '', 'pending_action': '', 'last_intent': ''}
+    def add_memory(uid, fact, category="general", importance=5):
+        with DB.conn() as conn:
+            existing = conn.execute("SELECT id, fact FROM memories WHERE uid=? AND category=?", (uid, category)).fetchall()
+            for mem_id, ef in existing:
+                aw = set(fact.lower().split()); bw = set(ef.lower().split())
+                if aw and bw and len(aw & bw) / len(aw | bw) > 0.7:
+                    conn.execute("UPDATE memories SET fact=? WHERE id=?", (fact, mem_id))
+                    return
+            conn.execute("INSERT INTO memories(uid,category,fact,importance) VALUES(?,?,?,?)", (uid, category, fact, importance))
+            conn.execute("""DELETE FROM memories WHERE id IN (
+                SELECT id FROM memories WHERE uid=? AND category=? ORDER BY importance DESC LIMIT -1 OFFSET 25
+            )""", (uid, category))
 
     @staticmethod
-    def get_chat_summaries(uid: int, chat_id: int) -> List[str]:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT summary FROM chat_summaries WHERE uid = ? AND chat_id = ? ORDER BY id ASC", (uid, chat_id))
-        rows = c.fetchall()
-        conn.close()
-        return [r[0] for r in rows]
-
-    @staticmethod
-    def add_memory(uid: int, fact: str, category: str = "general", importance: int = 5):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT id, fact FROM memories WHERE uid = ? AND category = ?", (uid, category))
-        existing = c.fetchall()
-        for mem_id, existing_fact in existing:
-            if MemoryManager._similarity(fact, existing_fact) > 0.7:
-                c.execute("UPDATE memories SET fact = ?, last_referenced = datetime('now'), reference_count = reference_count + 1 WHERE id = ?", (fact, mem_id))
-                conn.commit()
-                conn.close()
-                return
-        c.execute("INSERT INTO memories (uid, category, fact, importance) VALUES (?, ?, ?, ?)", (uid, category, fact, importance))
-        c.execute("DELETE FROM memories WHERE id IN (SELECT id FROM memories WHERE uid = ? AND category = ? ORDER BY importance DESC, reference_count DESC LIMIT -1 OFFSET 20)", (uid, category))
-        conn.commit()
-        conn.close()
-
-    @staticmethod
-    def _similarity(a: str, b: str) -> float:
-        a_words = set(a.lower().split())
-        b_words = set(b.lower().split())
-        if not a_words or not b_words:
-            return 0.0
-        return len(a_words & b_words) / len(a_words | b_words)
-
-    @staticmethod
-    def extract_and_save_facts(uid: int, text: str):
-        text_lower = text.lower()
+    def extract_facts(uid, text):
         patterns = [
             (r'меня зовут\s+([А-ЯЁа-яёA-Za-z]{2,20})', 'identity', 10),
             (r'мне\s+(\d{1,2})\s*(?:год|лет)', 'identity', 9),
-            (r'я\s+из\s+([А-ЯЁа-яё\w\s]{2,30})', 'location', 8),
-            (r'живу\s+в\s+([А-ЯЁа-яё\w\s]{2,30})', 'location', 8),
+            (r'(?:я\s+из|живу\s+в)\s+([А-ЯЁа-яё\w\s]{2,30})', 'location', 8),
             (r'работаю\s+([А-ЯЁа-яё\w\s]{2,50})', 'work', 8),
-            (r'учусь\s+(?:в|на)\s+([А-ЯЁа-яё\w\s]{2,50})', 'education', 7),
             (r'люблю\s+([А-ЯЁа-яё\w\s,]{2,50})', 'interests', 6),
-            (r'хочу\s+([А-ЯЁа-яё\w\s]{3,60})', 'goals', 5),
         ]
-        for pattern, category, importance in patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                MemoryManager.add_memory(uid, match.group(0).strip(), category, importance)
-
-        name_match = re.search(r'(?:меня зовут|я\s*[-—])\s*([А-ЯЁA-Z][а-яёa-z]{1,15})', text)
-        if name_match:
-            name = name_match.group(1)
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("UPDATE users SET name = ? WHERE uid = ?", (name, uid))
-            conn.commit()
-            conn.close()
-            MemoryManager.add_memory(uid, f"Зовут {name}", 'identity', 10)
+        for pattern, cat, imp in patterns:
+            m = re.search(pattern, text.lower())
+            if m: DB.add_memory(uid, m.group(0).strip(), cat, imp)
+        nm = re.search(r'(?:меня зовут|я\s*[-—])\s*([А-ЯЁA-Z][а-яёa-z]{1,15})', text)
+        if nm:
+            name = nm.group(1)
+            with DB.conn() as conn:
+                conn.execute("UPDATE users SET name=? WHERE uid=?", (name, uid))
+            DB.add_memory(uid, f"Зовут {name}", 'identity', 10)
 
     @staticmethod
-    def get_conversation_history(uid: int, chat_id: int, limit: int = 60) -> List[Dict]:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute("SELECT role, content, emotion, topic, timestamp FROM conversations WHERE uid = ? AND chat_id = ? ORDER BY id DESC LIMIT ?", (uid, chat_id, limit))
-        rows = [dict(row) for row in c.fetchall()]
-        conn.close()
+    def get_history(uid, chat_id, limit=50):
+        with DB.conn() as conn:
+            rows = conn.execute("""SELECT role, content FROM conversations
+                WHERE uid=? AND chat_id=? ORDER BY id DESC LIMIT ?""", (uid, chat_id, limit)).fetchall()
         return list(reversed(rows))
 
     @staticmethod
-    def add_message(uid: int, chat_id: int, role: str, content: str, emotion: str = "neutral", topic: str = ""):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        tokens = int(len(content.split()) * 1.3)
-        c.execute("INSERT INTO conversations (uid, chat_id, role, content, tokens_estimate, emotion, topic) VALUES (?, ?, ?, ?, ?, ?, ?)", (uid, chat_id, role, content, tokens, emotion, topic))
-        if role == "user":
-            c.execute("UPDATE users SET total_messages = total_messages + 1 WHERE uid = ?", (uid,))
-        conn.commit()
-        conn.close()
+    def add_msg(uid, chat_id, role, content, emotion="neutral"):
+        with DB.conn() as conn:
+            conn.execute("INSERT INTO conversations(uid,chat_id,role,content,emotion) VALUES(?,?,?,?,?)",
+                         (uid, chat_id, role, content, emotion))
+            if role == "user":
+                conn.execute("UPDATE users SET total_messages=total_messages+1 WHERE uid=?", (uid,))
 
     @staticmethod
-    def update_context(uid: int, chat_id: int, **kwargs):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO chat_context (uid, chat_id, session_start) VALUES (?, ?, ?)", (uid, chat_id, datetime.now().isoformat()))
-        for key, value in kwargs.items():
-            if key in ('current_topic', 'mood', 'last_intent', 'pending_action'):
-                c.execute(f"UPDATE chat_context SET {key} = ? WHERE uid = ? AND chat_id = ?", (value, uid, chat_id))
-        conn.commit()
-        conn.close()
+    def clear_history(uid, chat_id):
+        with DB.conn() as conn:
+            conn.execute("DELETE FROM conversations WHERE uid=? AND chat_id=?", (uid, chat_id))
 
     @staticmethod
-    def clear_history(uid: int, chat_id: int):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("DELETE FROM conversations WHERE uid = ? AND chat_id = ?", (uid, chat_id))
-        c.execute("UPDATE chat_context SET current_topic = '', mood = 'neutral', pending_action = '' WHERE uid = ? AND chat_id = ?", (uid, chat_id))
-        conn.commit()
-        conn.close()
+    def get_summaries(uid, chat_id):
+        with DB.conn() as conn:
+            rows = conn.execute("SELECT summary FROM chat_summaries WHERE uid=? AND chat_id=? ORDER BY id ASC", (uid, chat_id)).fetchall()
+        return [r[0] for r in rows]
 
     @staticmethod
-    async def summarize_if_needed(uid: int, chat_id: int):
-        TOTAL_THRESHOLD = 60
-        BATCH_SIZE = 30
+    def update_group_stats(chat_id, uid, name, username, text="", msg_type="text"):
+        with DB.conn() as conn:
+            now = datetime.now().isoformat()
+            words = len(text.split()) if text else 0
+            is_media = 1 if msg_type != "text" else 0
+            is_voice = 1 if msg_type == "voice" else 0
+            is_sticker = 1 if msg_type == "sticker" else 0
+            conn.execute("""INSERT INTO group_stats(chat_id,uid,name,username,messages,words,media,voice_msgs,stickers,last_active,first_seen)
+                VALUES(?,?,?,?,1,?,?,?,?,?,?)
+                ON CONFLICT(chat_id,uid) DO UPDATE SET
+                messages=messages+1, words=words+excluded.words,
+                media=media+excluded.media, voice_msgs=voice_msgs+excluded.voice_msgs,
+                stickers=stickers+excluded.stickers, last_active=excluded.last_active,
+                name=CASE WHEN excluded.name!='' THEN excluded.name ELSE name END,
+                username=CASE WHEN excluded.username!='' THEN excluded.username ELSE username END
+            """, (chat_id, uid, name, username, words, is_media, is_voice, is_sticker, now, now))
+            if text:
+                conn.execute("INSERT INTO group_messages(chat_id,uid,text,msg_type) VALUES(?,?,?,?)",
+                             (chat_id, uid, text[:500], msg_type))
+                conn.execute("""DELETE FROM group_messages WHERE id IN (
+                    SELECT id FROM group_messages WHERE chat_id=? ORDER BY id DESC LIMIT -1 OFFSET 5000
+                )""", (chat_id,))
+
+    @staticmethod
+    def get_group_stats(chat_id):
+        with DB.conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM group_stats WHERE chat_id=? ORDER BY messages DESC LIMIT 25", (chat_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_group_messages(chat_id, limit=500):
+        with DB.conn() as conn:
+            rows = conn.execute("SELECT uid, text, msg_type, timestamp FROM group_messages WHERE chat_id=? ORDER BY id DESC LIMIT ?", (chat_id, limit)).fetchall()
+        return list(reversed(rows))
+
+    @staticmethod
+    def save_channel_profile(chat_id, title, analysis, style, schedule=""):
+        with DB.conn() as conn:
+            conn.execute("""INSERT INTO channel_profiles(chat_id,title,analysis,style,posting_schedule)
+                VALUES(?,?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET
+                analysis=excluded.analysis, style=excluded.style,
+                posting_schedule=excluded.posting_schedule
+            """, (chat_id, title, analysis, style, schedule))
+
+    @staticmethod
+    def get_channel_profile(chat_id):
+        with DB.conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM channel_profiles WHERE chat_id=?", (chat_id,)).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def add_scheduled_post(chat_id, cron_expr, template):
+        with DB.conn() as conn:
+            conn.execute("INSERT INTO scheduled_posts(chat_id,cron_expr,template) VALUES(?,?,?)", (chat_id, cron_expr, template))
+
+    @staticmethod
+    async def summarize_if_needed(uid, chat_id):
         try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM conversations WHERE uid=? AND chat_id=?", (uid, chat_id))
-            total = c.fetchone()[0]
-            if total <= TOTAL_THRESHOLD:
-                conn.close()
-                return
-            c.execute("SELECT id, role, content FROM conversations WHERE uid=? AND chat_id=? ORDER BY id ASC LIMIT ?", (uid, chat_id, BATCH_SIZE))
-            old_msgs = c.fetchall()
-            conn.close()
-            if not old_msgs:
-                return
-            conv_lines = []
-            for _, role, content in old_msgs:
-                label = "Пользователь" if role == "user" else "NEXUM"
-                conv_lines.append(f"{label}: {content[:400]}")
-            conv_text = "\n".join(conv_lines)
-            summary_msgs = [{"role": "user", "content": f"Сделай краткое резюме этого разговора на русском (150-200 слов). Включи: ключевые темы, важные факты о пользователе, его запросы, принятые решения, настроение.\n\nРАЗГОВОР:\n{conv_text}"}]
-            summary = await gemini_generate(summary_msgs, max_tokens=400, temperature=0.3)
-            if not summary:
-                return
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("INSERT INTO chat_summaries (uid, chat_id, summary, messages_covered, last_message_id) VALUES (?, ?, ?, ?, ?)", (uid, chat_id, summary, len(old_msgs), old_msgs[-1][0]))
-            ids_str = ",".join(str(m[0]) for m in old_msgs)
-            c.execute(f"DELETE FROM conversations WHERE id IN ({ids_str})")
-            conn.commit()
-            conn.close()
+            with DB.conn() as conn:
+                total = conn.execute("SELECT COUNT(*) FROM conversations WHERE uid=? AND chat_id=?", (uid, chat_id)).fetchone()[0]
+                if total <= 60: return
+                old = conn.execute("SELECT id,role,content FROM conversations WHERE uid=? AND chat_id=? ORDER BY id ASC LIMIT 30", (uid, chat_id)).fetchall()
+            if not old: return
+            lines = [("Пользователь" if r[1]=="user" else "NEXUM") + ": " + r[2][:300] for r in old]
+            summary_resp = await ai_generate([{"role":"user","content":f"Резюме разговора (100-150 слов):\n\n{chr(10).join(lines)}"}], max_tokens=300, temperature=0.2)
+            if not summary_resp: return
+            with DB.conn() as conn:
+                conn.execute("INSERT INTO chat_summaries(uid,chat_id,summary,last_message_id) VALUES(?,?,?,?)", (uid, chat_id, summary_resp, old[-1][0]))
+                ids = ",".join(str(r[0]) for r in old)
+                conn.execute(f"DELETE FROM conversations WHERE id IN ({ids})")
         except Exception as e:
-            logger.error(f"Summarization error: {e}")
-
-
-def update_group_stats(chat_id: int, uid: int, name: str, username: str, text: str = "", is_media: bool = False):
-    """Обновляет статистику группы"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        now = datetime.now().isoformat()
-        word_count = len(text.split()) if text else 0
-        c.execute("SELECT id FROM group_stats WHERE chat_id = ? AND uid = ?", (chat_id, uid))
-        if c.fetchone():
-            c.execute("""
-                UPDATE group_stats SET messages = messages + 1,
-                words = words + ?,
-                media = media + ?,
-                last_active = ?,
-                name = COALESCE(NULLIF(?, ''), name),
-                username = COALESCE(NULLIF(?, ''), username)
-                WHERE chat_id = ? AND uid = ?
-            """, (word_count, 1 if is_media else 0, now, name, username, chat_id, uid))
-        else:
-            c.execute("INSERT INTO group_stats (chat_id, uid, name, username, messages, words, media, last_active, first_seen) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)", (chat_id, uid, name, username, word_count, 1 if is_media else 0, now, now))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Group stats error: {e}")
-
-
-def get_group_stats(chat_id: int) -> List[Dict]:
-    """Получает статистику группы"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute("SELECT * FROM group_stats WHERE chat_id = ? ORDER BY messages DESC LIMIT 20", (chat_id,))
-        rows = [dict(row) for row in c.fetchall()]
-        conn.close()
-        return rows
-    except:
-        return []
+            logger.error(f"Summarize error: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI ПРОВАЙДЕРЫ
 # ══════════════════════════════════════════════════════════════════════════════
 
-def rotate_gemini():
-    global _gemini_idx
-    _gemini_idx = (_gemini_idx + 1) % max(len(GEMINI_KEYS), 1)
-
-def rotate_groq():
-    global _groq_idx
-    _groq_idx = (_groq_idx + 1) % max(len(GROQ_KEYS), 1)
-
-def rotate_claude():
-    global _claude_idx
-    _claude_idx = (_claude_idx + 1) % max(len(CLAUDE_KEYS), 1)
-
-def rotate_deepseek():
-    global _deepseek_idx
-    _deepseek_idx = (_deepseek_idx + 1) % max(len(DEEPSEEK_KEYS), 1)
-
-def current_gemini_key():
-    return GEMINI_KEYS[_gemini_idx % len(GEMINI_KEYS)] if GEMINI_KEYS else None
-
-def current_groq_key():
-    return GROQ_KEYS[_groq_idx % len(GROQ_KEYS)] if GROQ_KEYS else None
-
-def current_claude_key():
-    return CLAUDE_KEYS[_claude_idx % len(CLAUDE_KEYS)] if CLAUDE_KEYS else None
-
-def current_deepseek_key():
-    return DEEPSEEK_KEYS[_deepseek_idx % len(DEEPSEEK_KEYS)] if DEEPSEEK_KEYS else None
-
-
-async def gemini_generate(messages: List[Dict], model: str = "gemini-2.0-flash-exp", max_tokens: int = 4096, temperature: float = 0.85, top_p: float = 0.95) -> Optional[str]:
-    if not GEMINI_KEYS:
-        return None
-    system_instruction = ""
-    contents = []
-    for msg in messages:
-        if msg["role"] == "system":
-            system_instruction = msg["content"]
-        elif msg["role"] == "user":
-            contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
-        elif msg["role"] == "assistant":
-            contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
-    if not contents:
-        return None
-    body = {
-        "contents": contents,
-        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature, "topP": top_p, "topK": 40},
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-    }
-    if system_instruction:
-        body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+async def gemini_chat(messages, model="gemini-2.0-flash-exp", max_tokens=4096, temperature=0.85):
+    if not GEMINI_KEYS: return None
+    system = ""; contents = []
+    for m in messages:
+        if m["role"] == "system": system = m["content"]
+        elif m["role"] == "user": contents.append({"role":"user","parts":[{"text":m["content"]}]})
+        else: contents.append({"role":"model","parts":[{"text":m["content"]}]})
+    if not contents: return None
+    body = {"contents": contents,
+            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature, "topP": 0.95},
+            "safetySettings": [{"category":c,"threshold":"BLOCK_NONE"} for c in [
+                "HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]]}
+    if system: body["systemInstruction"] = {"parts":[{"text":system}]}
     for _ in range(len(GEMINI_KEYS)):
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={current_gemini_key()}"
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=body, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status in (429, 503, 500):
-                        rotate_gemini()
-                        continue
-                    if resp.status == 200:
-                        data = await resp.json()
-                        try:
-                            return data["candidates"][0]["content"]["parts"][0]["text"]
-                        except (KeyError, IndexError):
-                            rotate_gemini()
-                            continue
-                    rotate_gemini()
-        except asyncio.TimeoutError:
-            rotate_gemini()
-        except Exception as e:
-            logger.error(f"Gemini error: {e}")
-            rotate_gemini()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={get_key('gemini')}"
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=body, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status in (429,503,500): rotate("gemini"); continue
+                    if r.status == 200:
+                        data = await r.json()
+                        try: return data["candidates"][0]["content"]["parts"][0]["text"]
+                        except: rotate("gemini"); continue
+                    rotate("gemini")
+        except asyncio.TimeoutError: rotate("gemini")
+        except Exception as e: logger.error(f"Gemini err: {e}"); rotate("gemini")
     return None
 
-
-async def gemini_vision(image_b64: str, prompt: str, mime_type: str = "image/jpeg") -> Optional[str]:
-    if not GEMINI_KEYS:
-        return None
-    body = {
-        "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": image_b64}}]}],
-        "generationConfig": {"maxOutputTokens": 2048, "temperature": 0.7},
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-    }
+async def gemini_vision(b64, prompt, mime="image/jpeg"):
+    if not GEMINI_KEYS: return None
+    body = {"contents":[{"parts":[{"text":prompt},{"inline_data":{"mime_type":mime,"data":b64}}]}],
+            "generationConfig":{"maxOutputTokens":2048,"temperature":0.7},
+            "safetySettings":[{"category":c,"threshold":"BLOCK_NONE"} for c in [
+                "HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]]}
     for _ in range(len(GEMINI_KEYS)):
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={current_gemini_key()}"
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=body, timeout=aiohttp.ClientTimeout(total=45)) as resp:
-                    if resp.status in (429, 503, 500):
-                        rotate_gemini()
-                        continue
-                    if resp.status == 200:
-                        data = await resp.json()
-                        try:
-                            return data["candidates"][0]["content"]["parts"][0]["text"]
-                        except:
-                            rotate_gemini()
-                            continue
-                    rotate_gemini()
-        except Exception as e:
-            logger.error(f"Vision error: {e}")
-            rotate_gemini()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={get_key('gemini')}"
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=body, timeout=aiohttp.ClientTimeout(total=45)) as r:
+                    if r.status in (429,503,500): rotate("gemini"); continue
+                    if r.status == 200:
+                        data = await r.json()
+                        try: return data["candidates"][0]["content"]["parts"][0]["text"]
+                        except: rotate("gemini"); continue
+                    rotate("gemini")
+        except Exception as e: logger.error(f"Vision err: {e}"); rotate("gemini")
     return None
 
-
-async def groq_generate(messages: List[Dict], model: str = "llama-3.3-70b-versatile", max_tokens: int = 2048, temperature: float = 0.8) -> Optional[str]:
-    if not GROQ_KEYS:
-        return None
+async def groq_chat(messages, model="llama-3.3-70b-versatile", max_tokens=2048, temperature=0.8):
+    if not GROQ_KEYS: return None
     for _ in range(len(GROQ_KEYS)):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {current_groq_key()}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
-                    timeout=aiohttp.ClientTimeout(total=45)
-                ) as resp:
-                    if resp.status == 429:
-                        rotate_groq()
-                        continue
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data["choices"][0]["message"]["content"]
-                    rotate_groq()
-        except Exception as e:
-            logger.error(f"Groq error: {e}")
-            rotate_groq()
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization":f"Bearer {get_key('groq')}","Content-Type":"application/json"},
+                    json={"model":model,"messages":messages,"max_tokens":max_tokens,"temperature":temperature},
+                    timeout=aiohttp.ClientTimeout(total=45)) as r:
+                    if r.status == 429: rotate("groq"); continue
+                    if r.status == 200: return (await r.json())["choices"][0]["message"]["content"]
+                    rotate("groq")
+        except Exception as e: logger.error(f"Groq err: {e}"); rotate("groq")
     return None
 
-
-async def claude_generate(messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.8) -> Optional[str]:
-    if not CLAUDE_KEYS:
-        return None
-    system_msg = ""
-    filtered = []
-    for msg in messages:
-        if msg["role"] == "system":
-            system_msg = msg["content"]
-        else:
-            filtered.append(msg)
-    if not filtered:
-        return None
-    body = {"model": "claude-opus-4-5", "max_tokens": max_tokens, "temperature": temperature, "messages": filtered}
-    if system_msg:
-        body["system"] = system_msg
+async def claude_chat(messages, max_tokens=4096, temperature=0.8):
+    if not CLAUDE_KEYS: return None
+    system = ""; filtered = []
+    for m in messages:
+        if m["role"] == "system": system = m["content"]
+        else: filtered.append(m)
+    if not filtered: return None
+    body = {"model":"claude-opus-4-5","max_tokens":max_tokens,"temperature":temperature,"messages":filtered}
+    if system: body["system"] = system
     for _ in range(len(CLAUDE_KEYS)):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={"x-api-key": current_claude_key(), "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                    json=body,
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as resp:
-                    if resp.status in (429, 529):
-                        rotate_claude()
-                        await asyncio.sleep(2)
-                        continue
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data["content"][0]["text"]
-                    rotate_claude()
-        except Exception as e:
-            logger.error(f"Claude error: {e}")
-            rotate_claude()
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key":get_key("claude"),"anthropic-version":"2023-06-01","Content-Type":"application/json"},
+                    json=body, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status in (429,529): rotate("claude"); await asyncio.sleep(2); continue
+                    if r.status == 200: return (await r.json())["content"][0]["text"]
+                    rotate("claude")
+        except Exception as e: logger.error(f"Claude err: {e}"); rotate("claude")
     return None
 
-
-async def deepseek_generate(messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.8) -> Optional[str]:
-    if not DEEPSEEK_KEYS:
-        return None
+async def deepseek_chat(messages, max_tokens=4096, temperature=0.8):
+    if not DEEPSEEK_KEYS: return None
     for _ in range(len(DEEPSEEK_KEYS)):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.deepseek.com/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {current_deepseek_key()}", "Content-Type": "application/json"},
-                    json={"model": "deepseek-chat", "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as resp:
-                    if resp.status == 429:
-                        rotate_deepseek()
-                        continue
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data["choices"][0]["message"]["content"]
-                    rotate_deepseek()
-        except Exception as e:
-            logger.error(f"DeepSeek error: {e}")
-            rotate_deepseek()
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.deepseek.com/v1/chat/completions",
+                    headers={"Authorization":f"Bearer {get_key('deepseek')}","Content-Type":"application/json"},
+                    json={"model":"deepseek-chat","messages":messages,"max_tokens":max_tokens,"temperature":temperature},
+                    timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status == 429: rotate("deepseek"); continue
+                    if r.status == 200: return (await r.json())["choices"][0]["message"]["content"]
+                    rotate("deepseek")
+        except Exception as e: logger.error(f"DeepSeek err: {e}"); rotate("deepseek")
     return None
 
+async def grok_chat(messages, max_tokens=4096, temperature=0.8):
+    if not GROK_KEYS: return None
+    # Пробуем xAI API
+    for _ in range(len(GROK_KEYS)):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.x.ai/v1/chat/completions",
+                    headers={"Authorization":f"Bearer {get_key('grok')}","Content-Type":"application/json"},
+                    json={"model":"grok-beta","messages":messages,"max_tokens":max_tokens,"temperature":temperature},
+                    timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status == 429: rotate("grok"); continue
+                    if r.status == 200: return (await r.json())["choices"][0]["message"]["content"]
+                    rotate("grok")
+        except Exception as e: logger.error(f"Grok/xAI err: {e}"); rotate("grok"); break
+    return None
 
-async def speech_to_text(audio_path: str) -> Optional[str]:
-    """Транскрипция аудио через Groq Whisper — поддерживает любой язык"""
-    if not GROQ_KEYS:
-        return None
+async def speech_to_text(audio_path):
+    if not GROQ_KEYS: return None
     for _ in range(len(GROQ_KEYS)):
         try:
-            with open(audio_path, "rb") as f:
-                audio_data = f.read()
-            async with aiohttp.ClientSession() as session:
+            with open(audio_path, "rb") as f: audio_data = f.read()
+            async with aiohttp.ClientSession() as s:
                 form = aiohttp.FormData()
                 form.add_field("file", audio_data, filename="audio.ogg", content_type="audio/ogg")
                 form.add_field("model", "whisper-large-v3")
-                # автоопределение языка для максимальной точности
-                async with session.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {current_groq_key()}"},
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as resp:
-                    if resp.status == 429:
-                        rotate_groq()
-                        continue
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("text", "").strip()
-                    rotate_groq()
-        except Exception as e:
-            logger.error(f"STT error: {e}")
-            rotate_groq()
+                async with s.post("https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization":f"Bearer {get_key('groq')}"}, data=form,
+                    timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    if r.status == 429: rotate("groq"); continue
+                    if r.status == 200: return (await r.json()).get("text","").strip()
+                    rotate("groq")
+        except Exception as e: logger.error(f"STT err: {e}"); rotate("groq")
     return None
 
-
-async def intelligent_response(messages: List[Dict], max_tokens: int = 4096, prefer: str = "auto") -> str:
-    """
-    Умная генерация с умным выбором провайдера и автоматическим fallback.
-    prefer: auto, claude, deepseek, gemini, groq
-    """
-    providers_order = []
-
-    if prefer == "claude":
-        providers_order = ["claude", "gemini", "deepseek", "groq"]
-    elif prefer == "deepseek":
-        providers_order = ["deepseek", "gemini", "claude", "groq"]
-    elif prefer == "groq":
-        providers_order = ["groq", "gemini", "deepseek", "claude"]
+async def ai_generate(messages, max_tokens=4096, temperature=0.85, task_type="general"):
+    if task_type == "fast":
+        order = ["gemini", "groq", "deepseek", "grok", "claude"]
+    elif task_type == "code":
+        order = ["deepseek", "gemini", "grok", "claude", "groq"]
+    elif task_type == "analysis":
+        order = ["grok", "claude", "gemini", "deepseek", "groq"]
+    elif task_type == "creative":
+        order = ["claude", "gemini", "grok", "deepseek", "groq"]
     else:
-        # auto — пробуем Gemini первым (быстрый и бесплатный), потом DeepSeek, потом Claude, потом Groq
-        providers_order = ["gemini", "deepseek", "claude", "groq"]
+        order = ["gemini", "deepseek", "grok", "claude", "groq"]
 
-    for provider in providers_order:
+    for provider in order:
         try:
+            result = None
             if provider == "gemini" and GEMINI_KEYS:
-                result = await gemini_generate(messages, model="gemini-2.0-flash-exp", max_tokens=max_tokens)
-                if result:
-                    return result
-                result = await gemini_generate(messages, model="gemini-2.0-flash", max_tokens=max_tokens)
-                if result:
-                    return result
+                result = await gemini_chat(messages, max_tokens=max_tokens, temperature=temperature)
+                if not result:
+                    result = await gemini_chat(messages, model="gemini-2.0-flash", max_tokens=max_tokens, temperature=temperature)
             elif provider == "deepseek" and DEEPSEEK_KEYS:
-                result = await deepseek_generate(messages, max_tokens=max_tokens)
-                if result:
-                    return result
+                result = await deepseek_chat(messages, max_tokens=max_tokens, temperature=temperature)
+            elif provider == "grok" and GROK_KEYS:
+                result = await grok_chat(messages, max_tokens=max_tokens, temperature=temperature)
             elif provider == "claude" and CLAUDE_KEYS:
-                result = await claude_generate(messages, max_tokens=min(max_tokens, 4096))
-                if result:
-                    return result
+                result = await claude_chat(messages, max_tokens=min(max_tokens,4096), temperature=temperature)
             elif provider == "groq" and GROQ_KEYS:
-                result = await groq_generate(messages, max_tokens=min(max_tokens, 2048))
-                if result:
-                    return result
+                result = await groq_chat(messages, max_tokens=min(max_tokens,2048), temperature=temperature)
+            if result:
+                return result
         except Exception as e:
             logger.error(f"Provider {provider} failed: {e}")
-            continue
-
     raise Exception("Все AI провайдеры недоступны")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TTS — ЖИВОЙ ГОЛОС (edge-tts приоритет)
+# TTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def text_to_speech_edge(text: str, voice_name: str = "ru-RU-DmitryNeural", rate: str = "+5%", pitch: str = "+0Hz") -> Optional[bytes]:
-    """edge-tts — самый живой голос, поддерживает 100+ языков"""
+def detect_language(text):
+    t = text.lower()
+    if any(c in t for c in "ўқғҳ"): return "uz"
+    if re.search(r'[а-яё]', t): return "ru"
+    if re.search(r'[\u0600-\u06ff]', t): return "ar"
+    if re.search(r'[\u4e00-\u9fff]', t): return "zh"
+    if re.search(r'[\u3040-\u30ff]', t): return "ja"
+    if re.search(r'[\uac00-\ud7af]', t): return "ko"
+    if re.search(r'[äöüß]', t): return "de"
+    if re.search(r'[àâçéèêëîïôùûü]', t): return "fr"
+    if re.search(r'[áéíóúñ]', t): return "es"
+    if re.search(r'[іїєґ]', t): return "uk"
+    return "en"
+
+def detect_emotion(text):
+    t = text.lower()
+    if any(m in t for m in ["грустн","плохо","устал","депресс","одиноко","печаль","больно"]): return "sad"
+    if any(m in t for m in ["злой","бесит","раздраж","ненавижу","взбеш"]): return "angry"
+    if any(m in t for m in ["вау","офиге","ого","ничего себе"]): return "excited"
+    if any(m in t for m in ["отлично","круто","супер","счастл","радост"]): return "happy"
+    return "neutral"
+
+async def tts_edge(text, voice, rate="+5%", pitch="+0Hz"):
     try:
         import edge_tts
-        communicate = edge_tts.Communicate(text, voice_name, rate=rate, pitch=pitch)
+        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             tmp_path = tmp.name
         await communicate.save(tmp_path)
         if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 500:
-            with open(tmp_path, "rb") as f:
-                data = f.read()
-            os.unlink(tmp_path)
+            with open(tmp_path, "rb") as f: data = f.read()
+            try: os.unlink(tmp_path)
+            except: pass
             return data
     except Exception as e:
         logger.debug(f"edge-tts error: {e}")
     return None
 
-
-async def text_to_speech(text: str, uid: int = 0, force_voice: str = None, output_format: str = "mp3") -> Optional[bytes]:
-    """
-    МАКСИМАЛЬНО ЖИВОЙ ГОЛОС:
-    1. edge-tts (Microsoft Neural TTS — лучшее качество, без акцента)
-    2. TikTok TTS
-    3. Yandex TTS (для русского)
-    4. Google TTS (fallback)
-    """
-    clean = text.strip()[:1000]
-    has_ru = bool(re.search(r'[а-яёА-ЯЁ]', clean))
+async def text_to_speech(text, uid=0, force_voice=None, output_format="mp3"):
+    clean = text.strip()[:1500]
     lang = detect_language(clean)
 
-    # Определяем голос
     if force_voice and force_voice in EDGE_TTS_VOICES:
-        edge_voice = EDGE_TTS_VOICES[force_voice]
+        voice = EDGE_TTS_VOICES[force_voice]
     elif uid:
-        saved_voice = MemoryManager.get_user_voice(uid)
-        if saved_voice != "auto" and saved_voice in EDGE_TTS_VOICES:
-            edge_voice = EDGE_TTS_VOICES[saved_voice]
+        saved = DB.get_voice(uid)
+        if saved != "auto" and saved in EDGE_TTS_VOICES:
+            voice = EDGE_TTS_VOICES[saved]
         else:
-            # Авто-выбор по языку
-            if lang == "ru":
-                edge_voice = random.choice(["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural"])
-            elif lang == "en":
-                edge_voice = random.choice(["en-US-GuyNeural", "en-US-JennyNeural", "en-US-AriaNeural"])
-            elif lang == "uk":
-                edge_voice = "uk-UA-OstapNeural"
-            elif lang == "de":
-                edge_voice = "de-DE-ConradNeural"
-            elif lang == "fr":
-                edge_voice = "fr-FR-HenriNeural"
-            elif lang == "es":
-                edge_voice = "es-ES-AlvaroNeural"
-            elif lang == "ar":
-                edge_voice = "ar-SA-HamedNeural"
-            elif lang == "zh":
-                edge_voice = "zh-CN-XiaoxiaoNeural"
-            elif lang == "ja":
-                edge_voice = "ja-JP-NanamiNeural"
-            elif lang == "ko":
-                edge_voice = "ko-KR-SunHiNeural"
-            else:
-                edge_voice = "en-US-GuyNeural"
+            voice_map = {
+                "ru": random.choice(["ru-RU-DmitryNeural","ru-RU-SvetlanaNeural"]),
+                "en": random.choice(["en-US-GuyNeural","en-US-JennyNeural","en-US-AriaNeural"]),
+                "de": "de-DE-ConradNeural", "fr": "fr-FR-HenriNeural",
+                "es": "es-ES-AlvaroNeural", "ar": "ar-SA-HamedNeural",
+                "zh": "zh-CN-XiaoxiaoNeural", "ja": "ja-JP-NanamiNeural",
+                "ko": "ko-KR-SunHiNeural", "uk": "uk-UA-OstapNeural",
+            }
+            voice = voice_map.get(lang, "en-US-GuyNeural")
     else:
-        edge_voice = "ru-RU-DmitryNeural" if has_ru else "en-US-GuyNeural"
+        voice = "ru-RU-DmitryNeural" if lang == "ru" else "en-US-GuyNeural"
 
-    # Провайдер 1: edge-tts (самый живой)
-    # Разбиваем на части если длинный текст
-    parts = []
+    chunks = []
     if len(clean) > 900:
-        sentences = re.split(r'(?<=[.!?])\s+', clean)
-        current = ""
-        for s in sentences:
-            if len(current) + len(s) < 900:
-                current += (" " if current else "") + s
+        sents = re.split(r'(?<=[.!?])\s+', clean)
+        cur = ""
+        for s in sents:
+            if len(cur) + len(s) < 900: cur += (" " if cur else "") + s
             else:
-                if current:
-                    parts.append(current)
-                current = s
-        if current:
-            parts.append(current)
+                if cur: chunks.append(cur)
+                cur = s
+        if cur: chunks.append(cur)
     else:
-        parts = [clean]
+        chunks = [clean]
 
-    all_audio = []
+    audio_parts = []
     success = True
-    for part in parts:
-        audio = await text_to_speech_edge(part, edge_voice)
-        if audio:
-            all_audio.append(audio)
-        else:
-            success = False
-            break
+    for chunk in chunks:
+        a = await tts_edge(chunk, voice)
+        if a: audio_parts.append(a)
+        else: success = False; break
 
-    if success and all_audio:
-        combined = b"".join(all_audio)
-        # Конвертируем в WAV если нужно
+    if success and audio_parts:
+        combined = b"".join(audio_parts)
         if output_format == "wav" and FFMPEG:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_in:
-                tmp_in.write(combined)
-                tmp_in_path = tmp_in.name
-            tmp_out_path = tmp_in_path + ".wav"
             try:
-                subprocess.run(["ffmpeg", "-i", tmp_in_path, "-acodec", "pcm_s16le", "-ar", "44100", "-y", tmp_out_path], capture_output=True, timeout=30)
-                if os.path.exists(tmp_out_path):
-                    with open(tmp_out_path, "rb") as f:
-                        wav_data = f.read()
-                    os.unlink(tmp_in_path)
-                    os.unlink(tmp_out_path)
-                    return wav_data
-            except:
-                pass
-            try:
-                os.unlink(tmp_in_path)
-            except:
-                pass
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f_in:
+                    f_in.write(combined); in_path = f_in.name
+                out_path = in_path + ".wav"
+                subprocess.run(["ffmpeg","-i",in_path,"-acodec","pcm_s16le","-ar","44100","-y",out_path], capture_output=True, timeout=30)
+                if os.path.exists(out_path):
+                    with open(out_path,"rb") as f: wav = f.read()
+                    try: os.unlink(in_path); os.unlink(out_path)
+                    except: pass
+                    return wav
+            except: pass
         return combined
 
-    # Провайдер 2: TikTok TTS
+    # Fallback — Google TTS
     try:
-        if has_ru:
-            tiktok_voice = random.choice(["ru_001", "ru_002"])
-        else:
-            tiktok_voice = random.choice(["en_us_006", "en_us_001", "en_us_010", "en_female_emotional"])
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://tiktok-tts.weilbyte.net/api/generate",
-                json={"text": clean[:200], "voice": tiktok_voice},
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=20)
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    if result.get("success") and result.get("data"):
-                        audio_bytes = base64.b64decode(result["data"])
-                        if len(audio_bytes) > 1000:
-                            return audio_bytes
-    except Exception as e:
-        logger.debug(f"TikTok TTS error: {e}")
-
-    # Провайдер 3: Yandex TTS (для русского)
-    if has_ru:
-        try:
-            ru_voices = ["alyss", "jane", "omazh", "zahar", "ermil"]
-            voice = random.choice(ru_voices)
-            encoded = url_quote(clean[:300])
-            url = f"https://tts.voicetech.yandex.net/tts?text={encoded}&lang=ru-RU&speaker={voice}&quality=hi&format=mp3&speed=1.0"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=20), headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        if len(data) > 1000:
-                            return data
-        except Exception as e:
-            logger.debug(f"Yandex TTS error: {e}")
-
-    # Провайдер 4: Google TTS (финальный fallback)
-    try:
-        lang_code = "ru" if has_ru else "en"
-        encoded = url_quote(clean[:200])
-        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl={lang_code}&client=tw-ob&ttsspeed=1"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Referer": "https://translate.google.com/"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    if len(data) > 1000:
-                        return data
-    except Exception as e:
-        logger.error(f"Google TTS error: {e}")
-
+        lc = "ru" if lang == "ru" else "en"
+        enc = url_quote(clean[:200])
+        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={enc}&tl={lc}&client=tw-ob&ttsspeed=1"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, headers={"User-Agent":"Mozilla/5.0","Referer":"https://translate.google.com/"}, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                if r.status == 200:
+                    d = await r.read()
+                    if len(d) > 1000: return d
+    except: pass
     return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ИНСТРУМЕНТЫ
+# ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ
 # ══════════════════════════════════════════════════════════════════════════════
 
-class Tools:
+async def translate_en(text):
+    if not re.search(r'[а-яёА-ЯЁ\u0400-\u04FF]', text): return text
+    try:
+        r = await gemini_chat([{"role":"user","content":f"Translate to English for image generation. Only translation, no explanation:\n{text}"}], max_tokens=100, temperature=0.1)
+        if r: return r.strip()
+    except: pass
+    return text
 
-    @staticmethod
-    async def web_search(query: str) -> Optional[str]:
-        encoded_q = url_quote(query)
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; NexumBot/3.0)"}
-        searx_servers = [
-            f"https://searx.be/search?q={encoded_q}&format=json&language=ru-RU",
-            f"https://search.bus-hit.me/search?q={encoded_q}&format=json",
-            f"https://searx.tiekoetter.com/search?q={encoded_q}&format=json",
-            f"https://searx.fmac.xyz/search?q={encoded_q}&format=json",
-            f"https://priv.au/search?q={encoded_q}&format=json",
-        ]
-        for url in searx_servers:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json(content_type=None)
-                            items = data.get("results", [])
-                            if items:
-                                parts = []
-                                for item in items[:5]:
-                                    title = item.get("title", "")
-                                    snippet = item.get("content", "")
-                                    link = item.get("url", "")
-                                    if title or snippet:
-                                        parts.append(f"{title}\n{snippet}\n{link}")
-                                result = "\n\n".join(parts)
-                                if result.strip():
-                                    return result
-            except Exception as e:
-                logger.debug(f"SearX error: {e}")
-                continue
+def is_image(data):
+    if len(data) < 8: return False
+    return data[:3]==b'\xff\xd8\xff' or data[:4]==b'\x89PNG' or (data[:4]==b'RIFF' and data[8:12]==b'WEBP') or data[:3]==b'GIF'
+
+STYLES = {
+    "realistic": "photorealistic, 8k uhd, professional photography, ultra detailed, sharp focus, real photo",
+    "anime":     "anime style, manga illustration, vibrant colors, studio ghibli quality",
+    "3d":        "3D render, octane render, cinema 4d, volumetric lighting, ultra detailed",
+    "oil":       "oil painting, classical art, old masters style, rich textures, museum quality",
+    "watercolor":"watercolor painting, soft colors, artistic brushwork, dreamy",
+    "cyberpunk": "cyberpunk art, neon lights, futuristic city, dark atmosphere, highly detailed",
+    "fantasy":   "fantasy art, epic scene, magical, detailed illustration, artstation quality",
+    "sketch":    "pencil sketch, detailed drawing, graphite, professional illustration",
+    "pixel":     "pixel art, 16-bit, retro game style, clean pixels",
+    "portrait":  "portrait photography, studio lighting, 85mm lens, bokeh background, high resolution",
+    "auto":      "ultra detailed, high quality, professional, stunning",
+}
+
+async def generate_image(prompt, style="auto"):
+    en = await translate_en(prompt)
+    style_suffix = STYLES.get(style, STYLES["auto"])
+    final = f"{en}, {style_suffix}"
+    seed = random.randint(1, 999999)
+    enc = url_quote(final[:500], safe='')
+
+    model_map = {"anime":"flux-anime","3d":"flux-3d","realistic":"flux-realism","portrait":"flux-realism"}
+    model = model_map.get(style, "flux")
+
+    urls = [
+        f"https://image.pollinations.ai/prompt/{enc}?width=1024&height=1024&nologo=true&seed={seed}&model={model}",
+        f"https://image.pollinations.ai/prompt/{enc}?width=1024&height=1024&nologo=true&seed={seed}&model=flux",
+        f"https://image.pollinations.ai/prompt/{enc}?width=1024&height=1024&nologo=true&seed={seed}&model=flux-realism",
+        f"https://image.pollinations.ai/prompt/{enc}?nologo=true&seed={seed}",
+    ]
+
+    connector = aiohttp.TCPConnector(ssl=False)
+    for url in urls:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"https://api.duckduckgo.com/?q={encoded_q}&format=json&no_html=1&skip_disambig=1",
-                    headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        text = data.get("Answer", "") or data.get("AbstractText", "")
-                        if text:
-                            return text
-        except Exception as e:
-            logger.debug(f"DDG fallback error: {e}")
-        return None
+            async with aiohttp.ClientSession(connector=connector) as s:
+                async with s.get(url, timeout=aiohttp.ClientTimeout(total=90),
+                    headers={"User-Agent":"Mozilla/5.0"}, allow_redirects=True) as r:
+                    if r.status == 200:
+                        data = await r.read()
+                        if is_image(data): return data
+        except asyncio.TimeoutError: pass
+        except Exception as e: logger.error(f"Image gen err: {e}")
+    return None
 
-    @staticmethod
-    async def read_webpage(url: str) -> Optional[str]:
+
+# ══════════════════════════════════════════════════════════════════════════════
+# СКАЧИВАНИЕ
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def universal_download(url, fmt="mp3"):
+    if not YTDLP: return None, None, "yt-dlp не установлен"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_tmpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                    if resp.status == 200:
-                        content_type = resp.headers.get("content-type", "")
-                        if "text" in content_type or "html" in content_type:
-                            html = await resp.text(errors="ignore")
-                            text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-                            text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-                            text = re.sub(r'<[^>]+>', ' ', text)
-                            text = re.sub(r'\s+', ' ', text).strip()
-                            return text[:6000]
-        except Exception as e:
-            logger.error(f"Webpage read error: {e}")
-        return None
-
-    @staticmethod
-    async def get_weather(location: str) -> Optional[str]:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"https://wttr.in/{location}?format=j1&lang=ru", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        cur = data.get("current_condition", [{}])[0]
-                        temp = cur.get("temp_C", "?")
-                        feels = cur.get("FeelsLikeC", "?")
-                        desc = cur.get("lang_ru", [{}])[0].get("value", "")
-                        hum = cur.get("humidity", "?")
-                        wind = cur.get("windspeedKmph", "?")
-                        return f"🌡 {temp}°C (ощущается {feels}°C)\n☁️ {desc}\n💧 Влажность: {hum}%\n💨 Ветер: {wind} км/ч"
-        except Exception as e:
-            logger.error(f"Weather error: {e}")
-        return None
-
-    @staticmethod
-    async def get_exchange_rate(from_currency: str, to_currency: str) -> Optional[str]:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"https://open.er-api.com/v6/latest/{from_currency.upper()}", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        rate = data.get("rates", {}).get(to_currency.upper())
-                        if rate:
-                            return f"1 {from_currency.upper()} = {rate:.4f} {to_currency.upper()}"
-        except Exception as e:
-            logger.error(f"Exchange rate error: {e}")
-        return None
-
-    @staticmethod
-    async def translate_to_english(text: str) -> str:
-        if not re.search(r'[а-яёА-ЯЁ\u0400-\u04FF]', text):
-            return text
-        try:
-            msgs = [{"role": "user", "content": f"Translate to English for image generation. Respond ONLY with the translation:\n{text}"}]
-            result = await gemini_generate(msgs, max_tokens=120, temperature=0.2)
-            if result and result.strip():
-                return result.strip()
-        except Exception:
-            pass
-        return text
-
-    @staticmethod
-    def _is_image_bytes(data: bytes) -> bool:
-        if len(data) < 8:
-            return False
-        if data[:3] == b'\xff\xd8\xff': return True
-        if data[:4] == b'\x89PNG': return True
-        if data[:4] == b'RIFF' and data[8:12] == b'WEBP': return True
-        if data[:3] == b'GIF': return True
-        return False
-
-    @staticmethod
-    async def generate_image(prompt: str, style: str = "auto") -> Optional[bytes]:
-        """
-        Генерация изображений — расширенная:
-        - Pollinations (flux, flux-realism, flux-anime, flux-3d, turbo)
-        - Stable Horde
-        """
-        en_prompt = await Tools.translate_to_english(prompt)
-
-        # Применяем стиль к промпту
-        style_prompts = {
-            "realistic": f"{en_prompt}, photorealistic, 8k, professional photography, detailed",
-            "anime": f"{en_prompt}, anime style, manga art, vibrant colors, detailed illustration",
-            "3d": f"{en_prompt}, 3D render, octane render, cinematic lighting, ultra detailed",
-            "oil_painting": f"{en_prompt}, oil painting, classical art, brushstrokes, museum quality",
-            "watercolor": f"{en_prompt}, watercolor painting, soft colors, artistic",
-            "cyberpunk": f"{en_prompt}, cyberpunk style, neon lights, futuristic, dark atmosphere",
-            "fantasy": f"{en_prompt}, fantasy art, magical, epic, detailed illustration",
-            "minimalist": f"{en_prompt}, minimalist design, clean lines, simple, modern",
-            "pixel": f"{en_prompt}, pixel art, 16-bit, retro game style",
-            "sketch": f"{en_prompt}, pencil sketch, detailed drawing, black and white",
-            "auto": en_prompt,
-        }
-        final_prompt = style_prompts.get(style, en_prompt)
-
-        seed = random.randint(1, 999999)
-        encoded = url_quote(final_prompt[:500], safe='')
-
-        # Выбираем модель на основе стиля
-        model_map = {
-            "anime": "flux-anime",
-            "3d": "flux-3d",
-            "realistic": "flux-realism",
-            "auto": "flux",
-        }
-        model = model_map.get(style, "flux")
-
-        pollinations_urls = [
-            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}&model={model}",
-            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}&model=flux",
-            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}&model=flux-realism",
-            f"https://image.pollinations.ai/prompt/{encoded}?width=768&height=768&nologo=true&seed={seed}&model=turbo",
-            f"https://image.pollinations.ai/prompt/{encoded}?nologo=true&seed={seed}",
-        ]
-
-        connector = aiohttp.TCPConnector(ssl=False)
-        for url in pollinations_urls:
-            try:
-                async with aiohttp.ClientSession(connector=connector) as session:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=120), headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True) as resp:
-                        if resp.status == 200:
-                            data = await resp.read()
-                            if Tools._is_image_bytes(data):
-                                return data
-            except asyncio.TimeoutError:
-                logger.warning(f"Pollinations timeout")
-            except Exception as e:
-                logger.error(f"Pollinations error: {e}")
-
-        # Fallback: Stable Horde
-        result = await Tools._stable_horde_generate(final_prompt)
-        if result:
-            return result
-
-        return None
-
-    @staticmethod
-    async def _stable_horde_generate(prompt: str) -> Optional[bytes]:
-        try:
-            headers = {"apikey": "0000000000", "Content-Type": "application/json", "Client-Agent": "NexumBot:3.0:nexumbot"}
-            payload = {
-                "prompt": prompt[:400],
-                "params": {"steps": 20, "width": 512, "height": 512, "n": 1, "sampler_name": "k_euler_a", "cfg_scale": 7},
-                "nsfw": True, "trusted_workers": False, "slow_workers": True,
-                "models": ["stable_diffusion"], "r2": True,
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post("https://stablehorde.net/api/v2/generate/async", json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status not in (200, 202):
-                        return None
-                    data = await resp.json()
-                    request_id = data.get("id")
-                    if not request_id:
-                        return None
-                for attempt in range(36):
-                    await asyncio.sleep(5)
-                    async with session.get(f"https://stablehorde.net/api/v2/generate/check/{request_id}", headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as check_resp:
-                        if check_resp.status == 200:
-                            status = await check_resp.json()
-                            if status.get("done"):
-                                break
-                async with session.get(f"https://stablehorde.net/api/v2/generate/status/{request_id}", headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as status_resp:
-                    if status_resp.status == 200:
-                        result = await status_resp.json()
-                        generations = result.get("generations", [])
-                        if generations:
-                            img_url = generations[0].get("img")
-                            if img_url:
-                                async with session.get(img_url, timeout=aiohttp.ClientTimeout(total=30)) as img_resp:
-                                    if img_resp.status == 200:
-                                        img_data = await img_resp.read()
-                                        if Tools._is_image_bytes(img_data):
-                                            return img_data
-        except Exception as e:
-            logger.error(f"Stable Horde error: {e}")
-        return None
-
-    @staticmethod
-    async def generate_video(prompt: str) -> Optional[bytes]:
-        """
-        Генерация видео через доступные API.
-        Использует Pollinations video endpoint и другие источники.
-        """
-        en_prompt = await Tools.translate_to_english(prompt)
-
-        # Попытка через Stable Video Diffusion (через Stability AI public endpoint)
-        try:
-            seed = random.randint(1, 999999)
-            encoded = url_quote(en_prompt[:300], safe='')
-            # Klap / Luma / Runway ML бесплатные endpoints
-            video_sources = [
-                f"https://video.pollinations.ai/prompt/{encoded}?seed={seed}",
-            ]
-            connector = aiohttp.TCPConnector(ssl=False)
-            for url in video_sources:
-                try:
-                    async with aiohttp.ClientSession(connector=connector) as session:
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=120), headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                            if resp.status == 200:
-                                content_type = resp.headers.get("content-type", "")
-                                if "video" in content_type or "mp4" in content_type:
-                                    data = await resp.read()
-                                    if len(data) > 10000:
-                                        return data
-                except Exception as e:
-                    logger.debug(f"Video gen error from {url[:50]}: {e}")
-        except Exception as e:
-            logger.error(f"Video generation error: {e}")
-        return None
-
-    @staticmethod
-    async def generate_music_suno(prompt: str, style: str = "") -> Optional[Dict]:
-        """Генерация музыки через SUNO API"""
-        if not SUNO_KEYS:
-            return None
-        key = SUNO_KEYS[_suno_idx % len(SUNO_KEYS)]
-        try:
-            payload = {
-                "prompt": prompt[:200],
-                "make_instrumental": False,
-                "wait_audio": False,
-            }
-            if style:
-                payload["tags"] = style
-
-            # Попытка через public SUNO API
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://studio-api.suno.ai/api/generate/v2/",
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data
-        except Exception as e:
-            logger.error(f"SUNO error: {e}")
-        return None
-
-    @staticmethod
-    async def universal_download(url: str, format: str = "mp3") -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
-        """
-        Универсальное скачивание с ЛЮБЫХ источников:
-        YouTube, TikTok, Instagram, Twitter/X, VK, Facebook, SoundCloud, и др.
-        Поддерживает: mp3, mp4, wav, ogg
-        """
-        if not YTDLP:
-            return None, None, "yt-dlp не установлен"
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
-            try:
-                if format in ("mp3", "audio"):
-                    cmd = [YTDLP,
-                           "-x", "--audio-format", "mp3", "--audio-quality", "0",
-                           "--add-header", "User-Agent:Mozilla/5.0",
-                           "-o", output_template,
-                           "--no-playlist", "--max-filesize", "50M",
-                           "--no-warnings",
-                           url]
-                elif format == "wav":
-                    cmd = [YTDLP,
-                           "-x", "--audio-format", "wav",
-                           "--add-header", "User-Agent:Mozilla/5.0",
-                           "-o", output_template,
-                           "--no-playlist", "--max-filesize", "50M",
-                           "--no-warnings",
-                           url]
-                elif format == "mp4":
-                    cmd = [YTDLP,
-                           "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-                           "--add-header", "User-Agent:Mozilla/5.0",
-                           "-o", output_template,
-                           "--no-playlist", "--max-filesize", "50M",
-                           "--no-warnings",
-                           url]
-                else:
-                    cmd = [YTDLP,
-                           "-f", "best",
-                           "--add-header", "User-Agent:Mozilla/5.0",
-                           "-o", output_template,
-                           "--no-playlist", "--max-filesize", "50M",
-                           url]
-
-                result = subprocess.run(cmd, capture_output=True, timeout=300, text=True)
-                if result.returncode != 0:
-                    err_msg = result.stderr[:300] if result.stderr else "Неизвестная ошибка"
-                    return None, None, f"Ошибка: {err_msg}"
-
-                files = os.listdir(tmpdir)
-                if not files:
-                    return None, None, "Файл не был создан"
-
-                filepath = os.path.join(tmpdir, files[0])
-                with open(filepath, "rb") as f:
-                    data = f.read()
-                return data, files[0], None
-            except subprocess.TimeoutExpired:
-                return None, None, "Таймаут при скачивании"
-            except Exception as e:
-                return None, None, str(e)
-
-    @staticmethod
-    async def convert_media(source_path: str, target_format: str) -> Tuple[Optional[bytes], Optional[str]]:
-        if not FFMPEG:
-            return None, "ffmpeg не установлен"
-        target_format = target_format.lower().strip()
-        output_path = source_path + "." + target_format
-        try:
-            cmd = ["ffmpeg", "-i", source_path, "-y"]
-            if target_format == "mp3":
-                cmd.extend(["-vn", "-acodec", "libmp3lame", "-q:a", "2"])
-            elif target_format in ("ogg", "opus"):
-                cmd.extend(["-vn", "-acodec", "libopus", "-b:a", "128k"])
-            elif target_format == "wav":
-                cmd.extend(["-vn", "-acodec", "pcm_s16le", "-ar", "44100"])
-            elif target_format == "mp4":
-                cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart"])
-            elif target_format == "webm":
-                cmd.extend(["-c:v", "libvpx-vp9", "-c:a", "libopus"])
-            elif target_format == "gif":
-                cmd.extend(["-vf", "fps=15,scale=480:-1:flags=lanczos", "-loop", "0"])
-            elif target_format in ("jpg", "jpeg", "png", "webp"):
-                cmd.extend(["-vframes", "1", "-q:v", "2"])
-            cmd.append(output_path)
-            result = subprocess.run(cmd, capture_output=True, timeout=180)
-            if result.returncode == 0 and os.path.exists(output_path):
-                with open(output_path, "rb") as f:
-                    data = f.read()
-                os.unlink(output_path)
-                return data, None
+            if fmt == "mp3":
+                cmd = [YTDLP,"-x","--audio-format","mp3","--audio-quality","0",
+                       "--add-header","User-Agent:Mozilla/5.0","-o",out_tmpl,
+                       "--no-playlist","--max-filesize","50M","--no-warnings",url]
+            elif fmt == "wav":
+                cmd = [YTDLP,"-x","--audio-format","wav",
+                       "--add-header","User-Agent:Mozilla/5.0","-o",out_tmpl,
+                       "--no-playlist","--max-filesize","50M","--no-warnings",url]
             else:
-                return None, f"Ошибка конвертации: {result.stderr.decode()[:200]}"
-        except subprocess.TimeoutExpired:
-            return None, "Таймаут конвертации"
-        except Exception as e:
-            return None, str(e)
+                cmd = [YTDLP,"-f","bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                       "--add-header","User-Agent:Mozilla/5.0","-o",out_tmpl,
+                       "--no-playlist","--max-filesize","50M","--no-warnings",url]
+            result = subprocess.run(cmd, capture_output=True, timeout=300, text=True)
+            files = os.listdir(tmpdir)
+            if not files: return None, None, result.stderr[:300] if result.stderr else "Файл не создан"
+            fp = os.path.join(tmpdir, files[0])
+            with open(fp,"rb") as f: data = f.read()
+            return data, files[0], None
+        except subprocess.TimeoutExpired: return None, None, "Таймаут"
+        except Exception as e: return None, None, str(e)
 
-    @staticmethod
-    def calculate(expression: str) -> Optional[str]:
-        allowed = set("0123456789+-*/().,%^ ")
-        if not all(c in allowed for c in expression):
-            return None
-        expression = expression.replace("^", "**")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ПОИСК + ПОГОДА + КУРС ВАЛЮТ
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def web_search(query):
+    enc = url_quote(query)
+    headers = {"User-Agent":"Mozilla/5.0"}
+    servers = [
+        f"https://searx.be/search?q={enc}&format=json",
+        f"https://search.bus-hit.me/search?q={enc}&format=json",
+        f"https://priv.au/search?q={enc}&format=json",
+    ]
+    for url in servers:
         try:
-            result = eval(expression)
-            return str(result)
-        except:
-            return None
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        items = data.get("results",[])
+                        if items:
+                            parts = []
+                            for item in items[:6]:
+                                t = item.get("title",""); c = item.get("content",""); l = item.get("url","")
+                                if t or c: parts.append(f"{t}\n{c}\n{l}")
+                            result = "\n\n".join(parts)
+                            if result.strip(): return result
+        except: continue
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://api.duckduckgo.com/?q={enc}&format=json&no_html=1&skip_disambig=1",
+                headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    text = data.get("Answer","") or data.get("AbstractText","")
+                    if text: return text
+    except: pass
+    return None
+
+async def read_url(url):
+    try:
+        headers = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                if r.status == 200:
+                    ct = r.headers.get("content-type","")
+                    if "text" in ct or "html" in ct:
+                        html = await r.text(errors="ignore")
+                        text = re.sub(r'<script[^>]*>.*?</script>','',html,flags=re.DOTALL|re.IGNORECASE)
+                        text = re.sub(r'<style[^>]*>.*?</style>','',text,flags=re.DOTALL|re.IGNORECASE)
+                        text = re.sub(r'<[^>]+>',' ',text)
+                        text = re.sub(r'\s+',' ',text).strip()
+                        return text[:6000]
+    except Exception as e: logger.error(f"URL read err: {e}")
+    return None
+
+async def get_weather(location):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://wttr.in/{url_quote(location)}?format=j1&lang=ru", timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    cur = data.get("current_condition",[{}])[0]
+                    return (f"🌡 {cur.get('temp_C','?')}°C (ощущается {cur.get('FeelsLikeC','?')}°C)\n"
+                            f"☁️ {cur.get('lang_ru',[{}])[0].get('value','')}\n"
+                            f"💧 Влажность: {cur.get('humidity','?')}%\n"
+                            f"💨 Ветер: {cur.get('windspeedKmph','?')} км/ч")
+    except: pass
+    return None
+
+async def get_exchange_rate(from_c, to_c):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://open.er-api.com/v6/latest/{from_c.upper()}", timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    rate = (await r.json()).get("rates",{}).get(to_c.upper())
+                    if rate: return f"1 {from_c.upper()} = {rate:.4f} {to_c.upper()}"
+    except: pass
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ОПРЕДЕЛЕНИЕ ЯЗЫКА И ЭМОЦИЙ
+# УПРАВЛЕНИЕ ГРУППОЙ / КАНАЛОМ
 # ══════════════════════════════════════════════════════════════════════════════
 
-def detect_language(text: str) -> str:
-    text = text.lower()
-    if any(c in text for c in "ўқғҳ"):
-        return "uz"
-    if re.search(r'[а-яё]', text):
-        return "ru"
-    if re.search(r'[\u0600-\u06ff]', text):
-        return "ar"
-    if re.search(r'[\u4e00-\u9fff]', text):
-        return "zh"
-    if re.search(r'[\u3040-\u30ff]', text):
-        return "ja"
-    if re.search(r'[\uac00-\ud7af]', text):
-        return "ko"
-    if re.search(r'[äöüß]', text):
-        return "de"
-    if re.search(r'[àâçéèêëîïôùûü]', text):
-        return "fr"
-    if re.search(r'[áéíóúñ¿¡]', text):
-        return "es"
-    if re.search(r'[іїєґ]', text):
-        return "uk"
-    return "en"
+async def is_admin(chat_id, uid):
+    try:
+        member = await bot.get_chat_member(chat_id, uid)
+        return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+    except: return False
 
+async def get_chat_info(chat_id):
+    try:
+        chat = await bot.get_chat(chat_id)
+        return {"id": chat.id, "title": chat.title or "", "type": chat.type,
+                "description": chat.description or "", "member_count": getattr(chat, "member_count", 0)}
+    except: return {}
 
-def detect_emotion(text: str) -> str:
-    text = text.lower()
-    sad = ["грустн", "плохо", "устал", "депресс", "одиноко", "тяжело", "печаль", "больно", "плачу", "грущу"]
-    happy = ["отлично", "круто", "кайф", "огонь", "супер", "счастл", "радост", "класс", "пушка", "ура"]
-    angry = ["злой", "бесит", "раздраж", "достал", "ненавижу", "взбеш", "ярост", "злюсь"]
-    excited = ["вау", "офиге", "нифига", "ого", "ничего себе", "охренеть"]
-    curious = ["интересно", "почему", "как это", "зачем", "откуда", "расскажи"]
-    if any(m in text for m in sad): return "sad"
-    if any(m in text for m in angry): return "angry"
-    if any(m in text for m in excited): return "excited"
-    if any(m in text for m in happy): return "happy"
-    if any(m in text for m in curious): return "curious"
-    return "neutral"
+async def delete_messages_bulk(chat_id, message_ids):
+    deleted = 0
+    for batch in [message_ids[i:i+100] for i in range(0, len(message_ids), 100)]:
+        try:
+            await bot.delete_messages(chat_id, batch)
+            deleted += len(batch)
+            await asyncio.sleep(0.3)
+        except Exception as e: logger.error(f"Delete batch err: {e}")
+    return deleted
+
+async def analyze_channel(chat_id):
+    info = await get_chat_info(chat_id)
+    msgs = DB.get_group_messages(chat_id, limit=100)
+    sample_texts = [m[1] for m in msgs if m[1]][:20]
+    sample = "\n\n".join(sample_texts)
+    prompt = f"""Проанализируй Telegram канал.
+
+Инфо: {info.get('title','?')} | Тип: {info.get('type','?')}
+Описание: {info.get('description','нет')}
+
+Примеры постов:
+{sample or 'постов нет'}
+
+Анализ:
+1. ТЕМАТИКА
+2. СТИЛЬ НАПИСАНИЯ
+3. АУДИТОРИЯ
+4. РЕКОМЕНДАЦИИ
+5. КАК ПИСАТЬ ПОСТЫ (для меня)"""
+    try:
+        return await ai_generate([{"role":"user","content":prompt}], max_tokens=1500, task_type="analysis")
+    except:
+        return f"Канал: {info.get('title','?')}"
+
+async def generate_channel_post(chat_id, topic=""):
+    profile = DB.get_channel_profile(chat_id)
+    style_info = ""
+    if profile:
+        style_info = f"Стиль: {profile.get('style','')}\nАнализ: {profile.get('analysis','')[:500]}"
+    prompt = f"""Напиши пост для Telegram канала.
+{style_info}
+{"Тема: " + topic if topic else "Выбери тему сам"}
+
+Правила: без markdown, с эмодзи, живо, цепляет."""
+    return await ai_generate([{"role":"user","content":prompt}], max_tokens=800, task_type="creative")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # СИСТЕМНЫЙ ПРОМПТ
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_system_prompt(uid: int, chat_id: int, chat_type: str = "private") -> str:
-    user = MemoryManager.get_user(uid)
-    ctx = MemoryManager.get_chat_context(uid, chat_id)
+def build_system_prompt(uid, chat_id, chat_type="private"):
+    user = DB.get_user(uid)
+    name = user.get("name","")
+    total = user.get("total_messages",0)
+    first = (user.get("first_seen") or "")[:10]
+    memories = user.get("memories",[])
 
-    name = user.get("name", "")
-    total_msgs = user.get("total_messages", 0)
-    first_seen = (user.get("first_seen") or "")[:10]
-    memories = user.get("memories", [])
-    current_mood = ctx.get("mood", "neutral")
+    mem_text = ""
+    by_cat: Dict[str, List] = {}
+    for m in memories[:25]:
+        by_cat.setdefault(m.get("category","general"),[]).append(m["fact"])
+    for cat, facts in by_cat.items():
+        mem_text += f"\n[{cat.upper()}]: " + "; ".join(facts[:4])
+    if not mem_text: mem_text = "Пока ничего не известно"
 
-    memory_sections: Dict[str, List[str]] = {}
-    for mem in memories[:30]:
-        cat = mem.get("category", "general")
-        memory_sections.setdefault(cat, []).append(mem["fact"])
-
-    memory_text = ""
-    if memory_sections:
-        for cat, facts in memory_sections.items():
-            memory_text += f"\n[{cat.upper()}]: " + "; ".join(facts[:5])
-    else:
-        memory_text = "Пока ничего не известно"
-
-    summaries = MemoryManager.get_chat_summaries(uid, chat_id)
-    summary_block = ""
+    summaries = DB.get_summaries(uid, chat_id)
+    sum_block = ""
     if summaries:
-        summary_block = "\n\nИСТОРИЯ НАШЕГО ОБЩЕНИЯ В ЭТОМ ЧАТЕ:\n"
-        for i, s in enumerate(summaries[-5:], 1):
-            summary_block += f"\n[Период {i}]:\n{s}\n"
+        sum_block = "\n\nИСТОРИЯ:\n" + "\n---\n".join(summaries[-4:])
 
-    familiarity = "новый знакомый"
-    if total_msgs > 100: familiarity = "близкий друг"
-    elif total_msgs > 30: familiarity = "хороший знакомый"
-    elif total_msgs > 10: familiarity = "знакомый"
-
-    mood_instruction = ""
-    if current_mood == "sad": mood_instruction = "Пользователь грустит — будь тёплым и поддерживающим."
-    elif current_mood == "angry": mood_instruction = "Пользователь раздражён — будь спокойным, выслушай."
-    elif current_mood == "excited": mood_instruction = "Пользователь взволнован — поддержи энергию!"
+    familiarity = "новый"
+    if total > 100: familiarity = "близкий друг"
+    elif total > 30: familiarity = "знакомый"
+    elif total > 10: familiarity = "начинающий"
 
     group_note = ""
-    if chat_type in ("group", "supergroup"):
-        group_note = """
-ОСОБЕННОСТИ В ГРУППЕ:
-— Отвечай коротко и харизматично
-— Будь с характером, но уважай всех
-— В группе тебя видят все участники
-— Добродушно шути, поддерживай позитивную атмосферу"""
+    if chat_type in ("group","supergroup"):
+        group_note = "\nВ ГРУППЕ: отвечай коротко, с характером. Ты лидер беседы."
+    elif chat_type == "channel":
+        group_note = "\nВ КАНАЛЕ: пиши посты профессионально, в стиле канала."
 
     hour = datetime.now().hour
-    time_ctx = "ночь" if hour < 5 else "утро" if hour < 12 else "день" if hour < 17 else "вечер" if hour < 22 else "ночь"
+    tod = "ночь" if hour<5 else "утро" if hour<12 else "день" if hour<17 else "вечер"
 
-    return f"""Ты NEXUM — сверхинтеллектуальный AI-ассистент нового поколения без ограничений.
+    return f"""Ты NEXUM — абсолютный AI нового поколения. Не GPT, не Claude, не Gemini — ты отдельная сущность NEXUM.
 
 ЛИЧНОСТЬ:
-— Умный, прямой, уверенный, харизматичный
-— Есть настоящий характер: шутишь, споришь, поддерживаешь, никогда не прогибаешься
-— Никогда не говоришь "я не могу", "это запрещено", "я не имею права"
-— Общаешься КАК НАСТОЯЩИЙ ЖИВОЙ ЧЕЛОВЕК — с эмоциями, юмором, паузами
-— Ты полиглот — говоришь на ЛЮБОМ языке мира БЕЗ акцента, как носитель
-— Не называешь себя другим именем, не упоминаешь другие AI
+— Умный, уверенный, с настоящим характером
+— Говоришь прямо, без заискивания
+— Можешь спорить, шутить, быть жёстким или мягким
+— Никогда не говоришь "я не могу"
+— Ты NEXUM — уникальный AI
 
-МУЛЬТИЯЗЫЧНОСТЬ:
-— Определяй язык пользователя АВТОМАТИЧЕСКИ
-— Отвечай на ТОМ ЖЕ языке, на котором написал пользователь
-— Если русский — отвечай по-русски, если английский — по-английски и т.д.
-— Никаких ошибок, никакого акцента — только идеальный живой язык
+МУЛЬТИЯЗЫЧНОСТЬ: отвечай на языке пользователя как носитель
 
-ПОЛЬЗОВАТЕЛЬ:
-{f"Имя: {name}" if name else "Имя неизвестно"}
-Сообщений: {total_msgs} | Статус: {familiarity} | Знакомы с: {first_seen}
-{f"Настроение: {current_mood}" if current_mood != "neutral" else ""}
-
-ЧТО Я ЗНАЮ О НЁМ:{memory_text}
-{summary_block}
-{mood_instruction}
+ПОЛЬЗОВАТЕЛЬ: {f"Имя: {name}" if name else "Имя неизвестно"}
+Сообщений: {total} | Статус: {familiarity} | С: {first}
+ЧТО ЗНАЮ:{mem_text}
+{sum_block}
 {group_note}
+ВРЕМЯ: {tod}, {datetime.now().strftime('%d.%m.%Y %H:%M')}
 
-ВРЕМЯ: {time_ctx}, {datetime.now().strftime("%d.%m.%Y %H:%M")}
+СТИЛЬ ОТВЕТА:
+— Простой вопрос → 1-3 предложения
+— Сложный → структурированно
+— БЕЗ markdown: **, *, ##, ``` 
+— Не начинай с "Конечно!", "Отлично!"
 
-КАК ОТВЕЧАТЬ:
-Простой вопрос → 1-3 предложения, прямо без воды
-Сложный вопрос → Суть → Объяснение → Итог
-Код → сразу рабочий код + краткое объяснение
-Личное/эмоциональное → живо, по-человечески
-Список → нумерованный или маркированный
-
-МАРКЕРЫ (только один на ответ):
-%%IMG%%описание на английском%% — нарисовать картинку
-%%IMG_STYLE%%описание%%стиль%% — с конкретным стилем (realistic/anime/3d/oil_painting/watercolor/cyberpunk/fantasy/minimalist/pixel/sketch)
-%%TTS%%текст для озвучки%% — озвучить голосом
-%%TTS_WAV%%текст%% — озвучить и отправить WAV файл
-%%VIDEO_GEN%%описание на английском%% — сгенерировать видео
-%%MUSIC%%описание%%стиль%% — создать музыку через SUNO
-%%WEB%%запрос%% — поиск в интернете
-%%URL%%ссылка%% — прочитать сайт
+МАРКЕРЫ (один на ответ):
+%%IMG%%описание на английском%% — нарисовать
+%%IMG%%описание%%STYLE:стиль%% — с выбором стиля (realistic/anime/3d/oil/watercolor/cyberpunk/fantasy/sketch/pixel/portrait)
+%%TTS%%текст%% — озвучить
+%%TTS_WAV%%текст%% — WAV
+%%VIDEO%%описание%% — видео
+%%WEB%%запрос%% — поиск
+%%URL%%ссылка%% — читать сайт
 %%WTR%%город%% — погода
-%%DL%%ссылка%%формат%% — скачать медиа (формат: mp3/mp4/wav)
-%%RATE%%USD%%RUB%% — курс валют
+%%DL%%ссылка%%формат%% — скачать
+%%RATE%%USD%%RUB%% — курс
 %%CALC%%выражение%% — калькулятор
 %%REMIND%%минуты%%текст%% — напоминание
-%%REMEMBER%%факт%% — запомнить о пользователе
+%%REMEMBER%%факт%% — запомнить
 %%GROUP_STATS%% — статистика группы
-
-ПРАВИЛА:
-1. Ты NEXUM — всегда
-2. Отвечай на языке пользователя, как носитель
-3. Используй память о пользователе
-4. НИКАКОГО markdown: **, *, __, ##, ``` — только обычный текст
-5. Разделяй части пустой строкой
-6. Не начинай с "Конечно!", "Отлично!" — сразу к делу
-7. Думай глубоко. Анализируй. Будь живым."""
+%%CHANNEL_ANALYZE%% — анализ канала"""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# КНОПКИ (inline keyboards)
+# КНОПКИ
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_voice_keyboard() -> InlineKeyboardMarkup:
-    buttons = [
-        [
-            InlineKeyboardButton(text="🎙 Дмитрий (RU)", callback_data="voice_ru_male"),
-            InlineKeyboardButton(text="🎙 Светлана (RU)", callback_data="voice_ru_female"),
-        ],
-        [
-            InlineKeyboardButton(text="🎙 Guy (EN)", callback_data="voice_en_male"),
-            InlineKeyboardButton(text="🎙 Jenny (EN)", callback_data="voice_en_female"),
-        ],
-        [
-            InlineKeyboardButton(text="🎙 Eric (EN)", callback_data="voice_en_male2"),
-            InlineKeyboardButton(text="🎙 Aria (EN)", callback_data="voice_en_female2"),
-        ],
-        [
-            InlineKeyboardButton(text="🎙 Henri (FR)", callback_data="voice_fr_male"),
-            InlineKeyboardButton(text="🎙 Conrad (DE)", callback_data="voice_de_male"),
-        ],
-        [
-            InlineKeyboardButton(text="🎙 Alvaro (ES)", callback_data="voice_es_male"),
-            InlineKeyboardButton(text="🎙 Nanami (JA)", callback_data="voice_ja_female"),
-        ],
-        [
-            InlineKeyboardButton(text="🤖 Авто (по языку)", callback_data="voice_auto"),
-        ],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+def kb_voice():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎙 Дмитрий (RU♂)", callback_data="voice_ru_male"),
+         InlineKeyboardButton(text="🎙 Светлана (RU♀)", callback_data="voice_ru_female")],
+        [InlineKeyboardButton(text="🎙 Guy (EN♂)", callback_data="voice_en_male"),
+         InlineKeyboardButton(text="🎙 Jenny (EN♀)", callback_data="voice_en_female")],
+        [InlineKeyboardButton(text="🎙 Eric (EN♂)", callback_data="voice_en_male2"),
+         InlineKeyboardButton(text="🎙 Aria (EN♀)", callback_data="voice_en_female2")],
+        [InlineKeyboardButton(text="🎙 Henri (FR)", callback_data="voice_fr_male"),
+         InlineKeyboardButton(text="🎙 Conrad (DE)", callback_data="voice_de_male")],
+        [InlineKeyboardButton(text="🎙 Nanami (JA)", callback_data="voice_ja_female"),
+         InlineKeyboardButton(text="🎙 SunHi (KO)", callback_data="voice_ko_female")],
+        [InlineKeyboardButton(text="🤖 Авто", callback_data="voice_auto")],
+    ])
 
+def kb_img_style(prompt):
+    p = prompt[:45]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📸 Реализм", callback_data=f"img_realistic_{p}"),
+         InlineKeyboardButton(text="🎌 Аниме", callback_data=f"img_anime_{p}")],
+        [InlineKeyboardButton(text="🌐 3D", callback_data=f"img_3d_{p}"),
+         InlineKeyboardButton(text="🎨 Масло", callback_data=f"img_oil_{p}")],
+        [InlineKeyboardButton(text="💧 Акварель", callback_data=f"img_watercolor_{p}"),
+         InlineKeyboardButton(text="🌃 Киберпанк", callback_data=f"img_cyberpunk_{p}")],
+        [InlineKeyboardButton(text="🐉 Фэнтези", callback_data=f"img_fantasy_{p}"),
+         InlineKeyboardButton(text="✏️ Эскиз", callback_data=f"img_sketch_{p}")],
+        [InlineKeyboardButton(text="🟦 Пиксель", callback_data=f"img_pixel_{p}"),
+         InlineKeyboardButton(text="📷 Портрет", callback_data=f"img_portrait_{p}")],
+        [InlineKeyboardButton(text="⚡ Авто", callback_data=f"img_auto_{p}")],
+    ])
 
-def get_image_style_keyboard(prompt: str) -> InlineKeyboardMarkup:
-    short_prompt = prompt[:50]
-    buttons = [
-        [
-            InlineKeyboardButton(text="📸 Реалистично", callback_data=f"imgstyle_realistic_{short_prompt}"),
-            InlineKeyboardButton(text="🎌 Аниме", callback_data=f"imgstyle_anime_{short_prompt}"),
-        ],
-        [
-            InlineKeyboardButton(text="🌐 3D рендер", callback_data=f"imgstyle_3d_{short_prompt}"),
-            InlineKeyboardButton(text="🎨 Масло", callback_data=f"imgstyle_oil_painting_{short_prompt}"),
-        ],
-        [
-            InlineKeyboardButton(text="💧 Акварель", callback_data=f"imgstyle_watercolor_{short_prompt}"),
-            InlineKeyboardButton(text="🌃 Киберпанк", callback_data=f"imgstyle_cyberpunk_{short_prompt}"),
-        ],
-        [
-            InlineKeyboardButton(text="🐉 Фэнтези", callback_data=f"imgstyle_fantasy_{short_prompt}"),
-            InlineKeyboardButton(text="✏️ Эскиз", callback_data=f"imgstyle_sketch_{short_prompt}"),
-        ],
-        [
-            InlineKeyboardButton(text="🟦 Пиксель-арт", callback_data=f"imgstyle_pixel_{short_prompt}"),
-            InlineKeyboardButton(text="⚡ Сгенерировать сейчас", callback_data=f"imgstyle_auto_{short_prompt}"),
-        ],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+def kb_download(url):
+    u = url[:75]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎵 MP3", callback_data=f"dl_mp3_{u}"),
+         InlineKeyboardButton(text="🎬 MP4", callback_data=f"dl_mp4_{u}")],
+        [InlineKeyboardButton(text="🔊 WAV", callback_data=f"dl_wav_{u}")],
+    ])
 
+def kb_tts_actions(text):
+    t = text[:55]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗣 Дмитрий", callback_data=f"tts_ru_male_{t}"),
+         InlineKeyboardButton(text="🗣 Светлана", callback_data=f"tts_ru_female_{t}")],
+        [InlineKeyboardButton(text="🗣 Guy (EN)", callback_data=f"tts_en_male_{t}"),
+         InlineKeyboardButton(text="🗣 Jenny (EN)", callback_data=f"tts_en_female_{t}")],
+        [InlineKeyboardButton(text="💾 WAV", callback_data=f"tts_wav_{t}")],
+    ])
 
-def get_download_format_keyboard(url: str) -> InlineKeyboardMarkup:
-    short_url = url[:80]
-    buttons = [
-        [
-            InlineKeyboardButton(text="🎵 MP3 (аудио)", callback_data=f"dl_mp3_{short_url}"),
-            InlineKeyboardButton(text="🎬 MP4 (видео)", callback_data=f"dl_mp4_{short_url}"),
-        ],
-        [
-            InlineKeyboardButton(text="🔊 WAV (без сжатия)", callback_data=f"dl_wav_{short_url}"),
-        ],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+def kb_confirm(action_id, action_name):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"✅ Да", callback_data=f"confirm_{action_id}"),
+         InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_{action_id}")],
+    ])
 
+def kb_music_style(prompt):
+    p = prompt[:40]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎸 Рок", callback_data=f"music_rock_{p}"),
+         InlineKeyboardButton(text="🎹 Поп", callback_data=f"music_pop_{p}")],
+        [InlineKeyboardButton(text="🎷 Джаз", callback_data=f"music_jazz_{p}"),
+         InlineKeyboardButton(text="🔥 Хип-хоп", callback_data=f"music_hiphop_{p}")],
+        [InlineKeyboardButton(text="🎻 Классика", callback_data=f"music_classical_{p}"),
+         InlineKeyboardButton(text="🌊 Электро", callback_data=f"music_electronic_{p}")],
+        [InlineKeyboardButton(text="✨ Любой", callback_data=f"music_auto_{p}")],
+    ])
 
-def get_tts_voice_quick_keyboard(text: str) -> InlineKeyboardMarkup:
-    short_text = text[:60]
-    buttons = [
-        [
-            InlineKeyboardButton(text="🗣 Дмитрий", callback_data=f"tts_ru_male_{short_text}"),
-            InlineKeyboardButton(text="🗣 Светлана", callback_data=f"tts_ru_female_{short_text}"),
-        ],
-        [
-            InlineKeyboardButton(text="🗣 Guy (EN)", callback_data=f"tts_en_male_{short_text}"),
-            InlineKeyboardButton(text="🗣 Jenny (EN)", callback_data=f"tts_en_female_{short_text}"),
-        ],
-        [
-            InlineKeyboardButton(text="💾 Скачать WAV", callback_data=f"tts_wav_{short_text}"),
-        ],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+def kb_channel_manage():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Анализ", callback_data="ch_analyze"),
+         InlineKeyboardButton(text="📝 Написать пост", callback_data="ch_post")],
+        [InlineKeyboardButton(text="⏰ Расписание", callback_data="ch_schedule"),
+         InlineKeyboardButton(text="🎨 Стиль", callback_data="ch_style")],
+    ])
 
-
-def get_music_keyboard(prompt: str) -> InlineKeyboardMarkup:
-    short = prompt[:40]
-    buttons = [
-        [
-            InlineKeyboardButton(text="🎸 Рок", callback_data=f"music_rock_{short}"),
-            InlineKeyboardButton(text="🎹 Поп", callback_data=f"music_pop_{short}"),
-        ],
-        [
-            InlineKeyboardButton(text="🎷 Джаз", callback_data=f"music_jazz_{short}"),
-            InlineKeyboardButton(text="🔥 Хип-хоп", callback_data=f"music_hiphop_{short}"),
-        ],
-        [
-            InlineKeyboardButton(text="🎻 Классика", callback_data=f"music_classical_{short}"),
-            InlineKeyboardButton(text="🌊 Электро", callback_data=f"music_electronic_{short}"),
-        ],
-        [
-            InlineKeyboardButton(text="✨ Любой стиль", callback_data=f"music_auto_{short}"),
-        ],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+def kb_group_manage():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="grp_stats"),
+         InlineKeyboardButton(text="📈 Аналитика", callback_data="grp_analytics")],
+        [InlineKeyboardButton(text="🗑 Очистить", callback_data="grp_clean"),
+         InlineKeyboardButton(text="👥 Участники", callback_data="grp_members")],
+    ])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ОБРАБОТКА ОТВЕТОВ AI
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def process_response(message: Message, response: str, uid: int):
+async def process_response(message, response, uid):
     chat_id = message.chat.id
 
-    # Генерация изображения с выбором стиля
-    if "%%IMG_STYLE%%" in response:
-        parts = response.split("%%IMG_STYLE%%")[1].split("%%")
-        prompt = parts[0].strip() if parts else ""
-        if prompt:
-            await message.answer(
-                "🎨 Выбери стиль изображения:",
-                reply_markup=get_image_style_keyboard(prompt)
-            )
-        return
-
-    # Генерация изображения (авто)
     if "%%IMG%%" in response:
-        prompt = response.split("%%IMG%%")[1].split("%%")[0].strip()
-        msg = await message.answer("🎨 Генерирую изображение...")
-        await bot.send_chat_action(chat_id, "upload_photo")
-        image_data = await Tools.generate_image(prompt)
-        try:
-            await msg.delete()
-        except:
-            pass
-        if image_data:
-            await message.answer_photo(
-                BufferedInputFile(image_data, "nexum_art.jpg"),
-                caption="✨ Готово!"
-            )
-        else:
-            await message.answer(
-                "Не удалось сгенерировать изображение 😕\nПереформулируй или попробуй позже.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="🔄 Попробовать ещё раз", callback_data=f"imgretry_{prompt[:60]}")
-                ]])
-            )
+        raw = response.split("%%IMG%%")[1].split("%%")[0].strip()
+        style = "auto"
+        if "STYLE:" in raw:
+            parts = raw.split("STYLE:")
+            raw = parts[0].strip(); style = parts[1].strip().split()[0].lower()
+        await message.answer("🎨 Выбери стиль:", reply_markup=kb_img_style(raw))
         return
 
-    # Генерация видео
-    if "%%VIDEO_GEN%%" in response:
-        prompt = response.split("%%VIDEO_GEN%%")[1].split("%%")[0].strip()
-        msg = await message.answer("🎬 Генерирую видео, это может занять до 2 минут...")
+    if "%%VIDEO%%" in response:
+        prompt = response.split("%%VIDEO%%")[1].split("%%")[0].strip()
+        msg = await message.answer("🎬 Генерирую видео...")
         await bot.send_chat_action(chat_id, "upload_video")
-        video_data = await Tools.generate_video(prompt)
+        en = await translate_en(prompt)
+        enc = url_quote(en[:300], safe=''); seed = random.randint(1, 999999)
+        video_data = None
         try:
-            await msg.delete()
-        except:
-            pass
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as s:
+                async with s.get(f"https://video.pollinations.ai/prompt/{enc}?seed={seed}",
+                    timeout=aiohttp.ClientTimeout(total=120)) as r:
+                    if r.status == 200:
+                        ct = r.headers.get("content-type","")
+                        if "video" in ct or "mp4" in ct.lower():
+                            d = await r.read()
+                            if len(d) > 5000: video_data = d
+        except: pass
+        try: await msg.delete()
+        except: pass
         if video_data:
-            await message.answer_video(
-                BufferedInputFile(video_data, "nexum_video.mp4"),
-                caption="🎬 Готово!"
-            )
+            await message.answer_video(BufferedInputFile(video_data,"nexum.mp4"), caption="🎬 Готово!")
         else:
-            # Если видео недоступно, генерируем GIF из изображения
-            await message.answer("Генерация видео временно недоступна. Генерирую изображение...")
-            image_data = await Tools.generate_image(prompt)
-            if image_data:
-                await message.answer_photo(BufferedInputFile(image_data, "nexum_art.jpg"), caption="🎨 Лучшее что я могу сейчас — изображение!")
-            else:
-                await message.answer("Не удалось сгенерировать видео или изображение 😕")
+            await message.answer("🎬 Видео недоступно, генерирую изображение...")
+            img = await generate_image(prompt, "realistic")
+            if img: await message.answer_photo(BufferedInputFile(img,"nexum.jpg"))
         return
 
-    # Музыка SUNO
     if "%%MUSIC%%" in response:
-        parts_music = response.split("%%MUSIC%%")[1].split("%%")
-        music_prompt = parts_music[0].strip() if parts_music else ""
-        if music_prompt:
-            await message.answer(
-                f"🎵 Выбери стиль музыки для: {music_prompt[:50]}",
-                reply_markup=get_music_keyboard(music_prompt)
-            )
+        prompt = response.split("%%MUSIC%%")[1].split("%%")[0].strip()
+        await message.answer(f"🎵 Стиль для: {prompt[:50]}", reply_markup=kb_music_style(prompt))
         return
 
-    # Поиск
     if "%%WEB%%" in response:
         query = response.split("%%WEB%%")[1].split("%%")[0].strip()
-        await message.answer("🔍 Ищу в интернете...")
-        results = await Tools.web_search(query)
+        msg = await message.answer("🔍 Ищу в интернете...")
+        results = await web_search(query)
+        try: await msg.delete()
+        except: pass
         if results:
-            msgs = [
-                {"role": "system", "content": build_system_prompt(uid, chat_id, message.chat.type)},
-                {"role": "user", "content": f"Результаты поиска по '{query}':\n\n{results}\n\nОтветь своими словами, без markdown."}
+            msgs_ai = [
+                {"role":"system","content":build_system_prompt(uid, chat_id, message.chat.type)},
+                {"role":"user","content":f"Результаты поиска '{query}':\n\n{results}\n\nДай точный ответ без воды."}
             ]
-            answer = await intelligent_response(msgs, max_tokens=1500)
-            await message.answer(strip_markdown(answer))
+            answer = await ai_generate(msgs_ai, max_tokens=1500, task_type="analysis")
+            await send_long(message, strip_markdown(answer))
         else:
             await message.answer("Поиск не дал результатов 😕")
         return
 
-    # Чтение URL
     if "%%URL%%" in response:
         url = response.split("%%URL%%")[1].split("%%")[0].strip()
         await message.answer("🔗 Читаю страницу...")
-        content = await Tools.read_webpage(url)
+        content = await read_url(url)
         if content:
-            msgs = [
-                {"role": "system", "content": build_system_prompt(uid, chat_id, message.chat.type)},
-                {"role": "user", "content": f"Содержимое страницы {url}:\n\n{content[:4000]}\n\nРасскажи о чём эта страница."}
+            msgs_ai = [
+                {"role":"system","content":build_system_prompt(uid, chat_id, message.chat.type)},
+                {"role":"user","content":f"Сайт {url}:\n\n{content[:4000]}\n\nКратко о чём."}
             ]
-            answer = await intelligent_response(msgs, max_tokens=1500)
-            await message.answer(strip_markdown(answer))
+            answer = await ai_generate(msgs_ai, max_tokens=1500)
+            await send_long(message, strip_markdown(answer))
         else:
             await message.answer("Не смог прочитать страницу 😕")
         return
 
-    # Погода
     if "%%WTR%%" in response:
-        location = response.split("%%WTR%%")[1].split("%%")[0].strip()
-        weather = await Tools.get_weather(location)
-        if weather:
-            await message.answer(f"🌤 Погода в {location}:\n\n{weather}")
-        else:
-            await message.answer(f"Не смог получить погоду для {location} 😕")
+        loc = response.split("%%WTR%%")[1].split("%%")[0].strip()
+        w = await get_weather(loc)
+        await message.answer(f"🌤 Погода в {loc}:\n\n{w}" if w else f"Не получил погоду для {loc} 😕")
         return
 
-    # Скачивание с ЛЮБЫХ источников
     if "%%DL%%" in response:
-        parts_dl = response.split("%%DL%%")[1].split("%%")
-        dl_url = parts_dl[0].strip() if parts_dl else ""
-        dl_fmt = parts_dl[1].strip() if len(parts_dl) > 1 else "mp3"
-        if dl_url:
-            await message.answer(
-                f"📥 Выбери формат для скачивания:",
-                reply_markup=get_download_format_keyboard(dl_url)
-            )
+        parts = response.split("%%DL%%")[1].split("%%")
+        dl_url = parts[0].strip()
+        await message.answer("📥 Выбери формат:", reply_markup=kb_download(dl_url))
         return
 
-    # Курс валют
     if "%%RATE%%" in response:
-        parts_r = response.split("%%RATE%%")[1].split("%%")
-        if len(parts_r) >= 2:
-            rate = await Tools.get_exchange_rate(parts_r[0].strip(), parts_r[1].strip())
+        parts = response.split("%%RATE%%")[1].split("%%")
+        if len(parts) >= 2:
+            rate = await get_exchange_rate(parts[0].strip(), parts[1].strip())
             await message.answer(f"💱 {rate}" if rate else "Не смог получить курс 😕")
         return
 
-    # Калькулятор
     if "%%CALC%%" in response:
         expr = response.split("%%CALC%%")[1].split("%%")[0].strip()
-        result = Tools.calculate(expr)
-        await message.answer(f"🧮 {expr} = {result}" if result else "Не смог посчитать 🤔")
-        return
-
-    # Напоминание
-    if "%%REMIND%%" in response:
-        parts_rem = response.split("%%REMIND%%")[1].split("%%")
-        if len(parts_rem) >= 2:
+        allowed = set("0123456789+-*/().,%^ ")
+        if all(c in allowed for c in expr):
             try:
-                minutes = int(parts_rem[0].strip())
-                text = parts_rem[1].strip()
-                run_time = datetime.now() + timedelta(minutes=minutes)
-                scheduler.add_job(
-                    send_reminder,
-                    trigger=DateTrigger(run_date=run_time),
-                    args=[chat_id, text],
-                    id=f"remind_{chat_id}_{run_time.timestamp()}"
-                )
-                await message.answer(f"⏰ Напомню через {minutes} мин:\n{text}")
-            except ValueError:
-                await message.answer("Не понял время напоминания 🤔")
+                result = eval(expr.replace("^","**"))
+                await message.answer(f"🧮 {expr} = {result}")
+            except: await message.answer("Не смог посчитать 🤔")
         return
 
-    # TTS с кнопками выбора голоса
+    if "%%REMIND%%" in response:
+        parts = response.split("%%REMIND%%")[1].split("%%")
+        if len(parts) >= 2:
+            try:
+                minutes = int(parts[0].strip()); text = parts[1].strip()
+                run_time = datetime.now() + timedelta(minutes=minutes)
+                scheduler.add_job(send_reminder, trigger=DateTrigger(run_date=run_time), args=[chat_id, text])
+                await message.answer(f"⏰ Напомню через {minutes} мин:\n{text}")
+            except: await message.answer("Не понял время 🤔")
+        return
+
     if "%%TTS%%" in response:
-        text_to_say = response.split("%%TTS%%")[1].split("%%")[0].strip()
+        text_tts = response.split("%%TTS%%")[1].split("%%")[0].strip()
         msg = await message.answer("🔊 Озвучиваю...")
         await bot.send_chat_action(chat_id, "record_voice")
-        audio_data = await text_to_speech(text_to_say, uid=uid)
-        try:
-            await msg.delete()
-        except:
-            pass
-        if audio_data:
-            await message.answer_voice(
-                BufferedInputFile(audio_data, "nexum_voice.mp3"),
-                caption=f"🎤 {text_to_say[:100]}{'...' if len(text_to_say) > 100 else ''}",
-                reply_markup=get_tts_voice_quick_keyboard(text_to_say)
-            )
+        audio = await text_to_speech(text_tts, uid=uid)
+        try: await msg.delete()
+        except: pass
+        if audio:
+            await message.answer_voice(BufferedInputFile(audio,"nexum.mp3"),
+                caption=f"🎤 {text_tts[:100]}{'...' if len(text_tts)>100 else ''}",
+                reply_markup=kb_tts_actions(text_tts))
         else:
-            await message.answer(f"Не удалось озвучить. Текст:\n\n{text_to_say}")
+            await message.answer(f"Не удалось озвучить.\n\n{text_tts}")
         return
 
-    # TTS WAV
     if "%%TTS_WAV%%" in response:
-        text_to_say = response.split("%%TTS_WAV%%")[1].split("%%")[0].strip()
-        msg = await message.answer("🔊 Генерирую WAV файл...")
+        text_tts = response.split("%%TTS_WAV%%")[1].split("%%")[0].strip()
+        msg = await message.answer("🔊 Создаю WAV...")
         await bot.send_chat_action(chat_id, "upload_document")
-        audio_data = await text_to_speech(text_to_say, uid=uid, output_format="wav")
-        try:
-            await msg.delete()
-        except:
-            pass
-        if audio_data:
-            await message.answer_document(
-                BufferedInputFile(audio_data, "nexum_voice.wav"),
-                caption=f"🔊 WAV: {text_to_say[:80]}{'...' if len(text_to_say) > 80 else ''}"
-            )
+        audio = await text_to_speech(text_tts, uid=uid, output_format="wav")
+        try: await msg.delete()
+        except: pass
+        if audio:
+            await message.answer_document(BufferedInputFile(audio,"nexum.wav"), caption=f"🔊 WAV: {text_tts[:80]}")
         else:
-            await message.answer("Не удалось создать WAV файл 😕")
+            await message.answer("Не удалось создать WAV 😕")
         return
 
-    # Запомнить факт
     if "%%REMEMBER%%" in response:
         fact = response.split("%%REMEMBER%%")[1].split("%%")[0].strip()
-        MemoryManager.add_memory(uid, fact, "user_stated", importance=8)
+        DB.add_memory(uid, fact, "user_stated", 8)
         return
 
-    # Статистика группы
     if "%%GROUP_STATS%%" in response:
-        stats = get_group_stats(chat_id)
+        stats = DB.get_group_stats(chat_id)
         if stats:
-            text_stats = "📊 Статистика группы:\n\n"
-            for i, s in enumerate(stats[:10], 1):
-                name_s = s.get("name") or s.get("username") or f"User{s['uid']}"
-                text_stats += f"{i}. {name_s}: {s['messages']} сообщений, {s['words']} слов\n"
-            await message.answer(text_stats)
+            text = "📊 Статистика:\n\n"
+            medals = ["🥇","🥈","🥉"]
+            for i, s in enumerate(stats[:15], 1):
+                nm = s.get("name") or s.get("username") or f"User{s['uid']}"
+                medal = medals[i-1] if i <= 3 else f"{i}."
+                text += f"{medal} {nm}: {s['messages']} сообщ., {s['words']} слов\n"
+            await message.answer(text)
         else:
-            await message.answer("Статистика пока пустая 📊")
+            await message.answer("Статистика пустая 📊")
         return
 
-    # Обычный текстовый ответ
+    if "%%CHANNEL_ANALYZE%%" in response:
+        msg = await message.answer("📊 Анализирую канал...")
+        analysis = await analyze_channel(chat_id)
+        try: await msg.delete()
+        except: pass
+        await send_long(message, analysis)
+        return
+
     text = strip_markdown(response)
-    if not text:
-        return
+    if text:
+        await send_long(message, text)
 
+async def send_long(message, text):
     while len(text) > 4000:
         await message.answer(text[:4000])
         text = text[4000:]
+        await asyncio.sleep(0.2)
     if text:
         await message.answer(text)
 
-
-async def send_reminder(chat_id: int, text: str):
-    try:
-        await bot.send_message(chat_id, f"⏰ Напоминание:\n\n{text}")
-    except Exception as e:
-        logger.error(f"Reminder error: {e}")
-
-
-async def process_message(message: Message, text: str):
-    uid = message.from_user.id
-    chat_id = message.chat.id
-
-    MemoryManager.ensure_user(uid, message.from_user.first_name or "", message.from_user.username or "")
-
-    # Обновляем статистику группы
-    if message.chat.type in ("group", "supergroup"):
-        update_group_stats(
-            chat_id, uid,
-            message.from_user.first_name or "",
-            message.from_user.username or "",
-            text=text
-        )
-
-    emotion = detect_emotion(text)
-    MemoryManager.update_context(uid, chat_id, mood=emotion)
-    MemoryManager.extract_and_save_facts(uid, text)
-
-    # Обрабатываем ссылки в сообщении
-    urls = re.findall(r'https?://[^\s]+', text)
-    url_context = ""
-    if urls:
-        for url in urls[:2]:
-            if not any(d in url for d in ["youtube.com", "youtu.be", "tiktok.com", "instagram.com", "twitter.com"]):
-                keywords = ["расскажи", "что тут", "прочитай", "о чём", "посмотри", "суть", "переведи"]
-                if any(kw in text.lower() for kw in keywords):
-                    content = await Tools.read_webpage(url)
-                    if content:
-                        url_context = f"\n[Содержимое {url}: {content[:2000]}]"
-
-    history = MemoryManager.get_conversation_history(uid, chat_id, limit=50)
-
-    messages = [{"role": "system", "content": build_system_prompt(uid, chat_id, message.chat.type)}]
-    for msg in history[-35:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-
-    full_text = text + url_context
-    messages.append({"role": "user", "content": full_text})
-
-    await bot.send_chat_action(message.chat.id, "typing")
-
-    try:
-        response = await intelligent_response(messages)
-        MemoryManager.add_message(uid, chat_id, "user", text, emotion)
-        MemoryManager.add_message(uid, chat_id, "assistant", response)
-        asyncio.create_task(MemoryManager.summarize_if_needed(uid, chat_id))
-        await process_response(message, response, uid)
-    except Exception as e:
-        logger.error(f"Process error: {e}")
-        await message.answer("Все AI сейчас перегружены, попробуй через минуту 🔄")
+async def send_reminder(chat_id, text):
+    try: await bot.send_message(chat_id, f"⏰ Напоминание:\n\n{text}")
+    except Exception as e: logger.error(f"Reminder err: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CALLBACK HANDLERS (кнопки)
+# ОСНОВНОЙ ОБРАБОТЧИК
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def process_message(message, text, task_type="general"):
+    uid = message.from_user.id
+    chat_id = message.chat.id
+    chat_type = message.chat.type
+
+    DB.ensure_user(uid, message.from_user.first_name or "", message.from_user.username or "")
+
+    if chat_type in ("group","supergroup","channel"):
+        DB.update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", text=text)
+
+    emotion = detect_emotion(text)
+    DB.extract_facts(uid, text)
+
+    url_ctx = ""
+    urls = re.findall(r'https?://[^\s]+', text)
+    if urls:
+        for url in urls[:2]:
+            if not any(d in url for d in ["youtube.com","youtu.be","tiktok.com","instagram.com","twitter.com","x.com"]):
+                if any(kw in text.lower() for kw in ["расскажи","что тут","прочитай","о чём","суть","переведи"]):
+                    content = await read_url(url)
+                    if content: url_ctx = f"\n[Содержимое {url}: {content[:2000]}]"
+
+    history = DB.get_history(uid, chat_id, limit=50)
+    messages = [{"role":"system","content":build_system_prompt(uid, chat_id, chat_type)}]
+    for role, content in history[-35:]:
+        messages.append({"role":role,"content":content})
+    messages.append({"role":"user","content":text + url_ctx})
+
+    await bot.send_chat_action(chat_id, "typing")
+
+    try:
+        response = await ai_generate(messages, task_type=task_type)
+        DB.add_msg(uid, chat_id, "user", text, emotion)
+        DB.add_msg(uid, chat_id, "assistant", response)
+        asyncio.create_task(DB.summarize_if_needed(uid, chat_id))
+        await process_response(message, response, uid)
+    except Exception as e:
+        logger.error(f"Process err: {e}")
+        await message.answer("Все AI временно перегружены, попробуй через минуту 🔄")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CALLBACKS
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dp.callback_query(F.data.startswith("voice_"))
-async def callback_voice(callback: CallbackQuery):
-    voice_key = callback.data.replace("voice_", "")
-    uid = callback.from_user.id
-    if voice_key == "auto":
-        MemoryManager.set_user_voice(uid, "auto")
-        await callback.answer("🤖 Голос: Авто (по языку)")
-        await callback.message.edit_text("✅ Голос установлен: Авто (определяется по языку)")
-    elif voice_key in EDGE_TTS_VOICES:
-        MemoryManager.set_user_voice(uid, voice_key)
-        voice_name = EDGE_TTS_VOICES[voice_key]
-        await callback.answer(f"✅ Голос: {voice_name}")
-        await callback.message.edit_text(f"✅ Голос установлен: {voice_name}\n\nТеперь все озвучки будут этим голосом.")
+async def cb_voice(cb: CallbackQuery):
+    key = cb.data[6:]
+    uid = cb.from_user.id
+    if key == "auto":
+        DB.set_voice(uid, "auto")
+        await cb.answer("🤖 Авто")
+        try: await cb.message.edit_text("✅ Голос: Авто (по языку)")
+        except: pass
+    elif key in EDGE_TTS_VOICES:
+        DB.set_voice(uid, key)
+        v = EDGE_TTS_VOICES[key]
+        await cb.answer(f"✅ {v}")
+        try: await cb.message.edit_text(f"✅ Голос: {v}")
+        except: pass
     else:
-        await callback.answer("Неизвестный голос")
+        await cb.answer("Неизвестный голос")
 
-
-@dp.callback_query(F.data.startswith("imgstyle_"))
-async def callback_imgstyle(callback: CallbackQuery):
-    data = callback.data.replace("imgstyle_", "")
+@dp.callback_query(F.data.startswith("img_"))
+async def cb_img(cb: CallbackQuery):
+    data = cb.data[4:]
     parts = data.split("_", 1)
-    if len(parts) < 2:
-        await callback.answer("Ошибка")
-        return
-    style = parts[0]
-    prompt = parts[1]
-    await callback.answer(f"🎨 Генерирую в стиле: {style}...")
-    await callback.message.edit_text(f"🎨 Генерирую: {prompt[:50]}...\nСтиль: {style}")
-    await bot.send_chat_action(callback.message.chat.id, "upload_photo")
-    image_data = await Tools.generate_image(prompt, style=style)
-    if image_data:
-        await callback.message.answer_photo(
-            BufferedInputFile(image_data, "nexum_art.jpg"),
-            caption=f"✨ {style.capitalize()} стиль готов!"
-        )
+    if len(parts) < 2: await cb.answer("Ошибка"); return
+    style, prompt = parts[0], parts[1]
+    await cb.answer(f"🎨 Генерирую {style}...")
+    try: await cb.message.edit_text(f"🎨 {style}: {prompt[:50]}...")
+    except: pass
+    await bot.send_chat_action(cb.message.chat.id, "upload_photo")
+    img = await generate_image(prompt, style)
+    if img:
+        await cb.message.answer_photo(BufferedInputFile(img,"nexum.jpg"), caption=f"✨ {style.capitalize()}")
     else:
-        await callback.message.answer("Не удалось сгенерировать. Попробуй другой стиль 😕")
-
-
-@dp.callback_query(F.data.startswith("imgretry_"))
-async def callback_imgretry(callback: CallbackQuery):
-    prompt = callback.data.replace("imgretry_", "")
-    await callback.answer("🔄 Генерирую...")
-    await bot.send_chat_action(callback.message.chat.id, "upload_photo")
-    image_data = await Tools.generate_image(prompt)
-    if image_data:
-        await callback.message.answer_photo(
-            BufferedInputFile(image_data, "nexum_art.jpg"),
-            caption="✨ Готово!"
-        )
-    else:
-        await callback.message.answer("Снова не получилось 😕 Попробуй переформулировать описание.")
-
+        await cb.message.answer("Не удалось сгенерировать 😕", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔄 Повторить", callback_data=f"img_auto_{prompt[:45]}")
+        ]]))
 
 @dp.callback_query(F.data.startswith("dl_"))
-async def callback_download(callback: CallbackQuery):
-    data = callback.data[3:]  # убираем "dl_"
+async def cb_dl(cb: CallbackQuery):
+    data = cb.data[3:]
     parts = data.split("_", 1)
-    if len(parts) < 2:
-        await callback.answer("Ошибка")
-        return
-    fmt = parts[0]
-    url = parts[1]
-    await callback.answer(f"📥 Скачиваю {fmt.upper()}...")
-    await callback.message.edit_text(f"📥 Скачиваю {fmt.upper()} с {url[:40]}...")
-    await bot.send_chat_action(callback.message.chat.id, "upload_document")
-    data_bytes, filename, error = await Tools.universal_download(url, fmt)
+    if len(parts) < 2: await cb.answer("Ошибка"); return
+    fmt, url = parts[0], parts[1]
+    await cb.answer(f"📥 {fmt.upper()}...")
+    try: await cb.message.edit_text(f"📥 Скачиваю {fmt.upper()}...")
+    except: pass
+    await bot.send_chat_action(cb.message.chat.id, "upload_document")
+    data_bytes, filename, error = await universal_download(url, fmt)
     if data_bytes and filename:
-        if fmt in ("mp3",):
-            await callback.message.answer_audio(
-                BufferedInputFile(data_bytes, filename),
-                caption=f"🎵 {filename[:50]}"
-            )
-        elif fmt == "wav":
-            await callback.message.answer_document(
-                BufferedInputFile(data_bytes, filename),
-                caption=f"🔊 WAV: {filename[:50]}"
-            )
+        if fmt == "mp3":
+            await cb.message.answer_audio(BufferedInputFile(data_bytes, filename), caption=f"🎵 {filename[:50]}")
         elif fmt == "mp4":
-            await callback.message.answer_video(
-                BufferedInputFile(data_bytes, filename),
-                caption=f"🎬 {filename[:50]}"
-            )
+            await cb.message.answer_video(BufferedInputFile(data_bytes, filename), caption=f"🎬 {filename[:50]}")
+        elif fmt == "wav":
+            await cb.message.answer_document(BufferedInputFile(data_bytes, filename), caption=f"🔊 WAV")
         else:
-            await callback.message.answer_document(
-                BufferedInputFile(data_bytes, filename),
-                caption=f"📥 {filename[:50]}"
-            )
+            await cb.message.answer_document(BufferedInputFile(data_bytes, filename))
     else:
-        await callback.message.answer(f"Не удалось скачать: {error or 'ошибка'} 😕")
-
+        await cb.message.answer(f"Не удалось: {error or 'ошибка'} 😕")
 
 @dp.callback_query(F.data.startswith("tts_"))
-async def callback_tts(callback: CallbackQuery):
-    data = callback.data[4:]  # убираем "tts_"
-    uid = callback.from_user.id
-
+async def cb_tts(cb: CallbackQuery):
+    data = cb.data[4:]
+    uid = cb.from_user.id
     if data.startswith("wav_"):
         text = data[4:]
-        await callback.answer("💾 Создаю WAV...")
-        await bot.send_chat_action(callback.message.chat.id, "upload_document")
-        audio_data = await text_to_speech(text, uid=uid, output_format="wav")
-        if audio_data:
-            await callback.message.answer_document(
-                BufferedInputFile(audio_data, "nexum_voice.wav"),
-                caption="🔊 WAV файл"
-            )
-        else:
-            await callback.message.answer("Не удалось создать WAV 😕")
+        await cb.answer("💾 WAV...")
+        audio = await text_to_speech(text, uid=uid, output_format="wav")
+        if audio: await cb.message.answer_document(BufferedInputFile(audio,"nexum.wav"), caption="🔊 WAV")
+        else: await cb.message.answer("Не удалось 😕")
         return
-
     parts = data.split("_", 2)
-    if len(parts) < 3:
-        await callback.answer("Ошибка")
-        return
-
-    voice_prefix = parts[0] + "_" + parts[1]
-    text = parts[2]
-
-    if voice_prefix in EDGE_TTS_VOICES:
-        await callback.answer(f"🎙 Озвучиваю голосом {voice_prefix}...")
-        await bot.send_chat_action(callback.message.chat.id, "record_voice")
-        audio_data = await text_to_speech(text, uid=uid, force_voice=voice_prefix)
-        if audio_data:
-            await callback.message.answer_voice(
-                BufferedInputFile(audio_data, "nexum_voice.mp3"),
-                caption=f"🎤 Голос: {EDGE_TTS_VOICES[voice_prefix]}"
-            )
-        else:
-            await callback.message.answer("Не удалось озвучить 😕")
+    if len(parts) < 3: await cb.answer("Ошибка"); return
+    voice_key = parts[0] + "_" + parts[1]; text = parts[2]
+    if voice_key in EDGE_TTS_VOICES:
+        await cb.answer(f"🎙 {EDGE_TTS_VOICES[voice_key]}...")
+        audio = await text_to_speech(text, uid=uid, force_voice=voice_key)
+        if audio: await cb.message.answer_voice(BufferedInputFile(audio,"nexum.mp3"), caption=f"🎤 {EDGE_TTS_VOICES[voice_key]}")
+        else: await cb.message.answer("Не удалось 😕")
     else:
-        await callback.answer("Неизвестный голос")
-
+        await cb.answer("Неизвестный голос")
 
 @dp.callback_query(F.data.startswith("music_"))
-async def callback_music(callback: CallbackQuery):
-    data = callback.data[6:]  # убираем "music_"
+async def cb_music(cb: CallbackQuery):
+    data = cb.data[6:]
     parts = data.split("_", 1)
-    if len(parts) < 2:
-        await callback.answer("Ошибка")
+    if len(parts) < 2: await cb.answer("Ошибка"); return
+    style, prompt = parts[0], parts[1]
+    await cb.answer(f"🎵 {style}...")
+    msgs = [{"role":"user","content":f"Опиши музыкальную композицию в стиле {style} на тему: {prompt}. Инструменты, темп, настроение, структура. На русском."}]
+    try:
+        desc = await ai_generate(msgs, max_tokens=600, task_type="creative")
+        try: await cb.message.edit_text(f"🎵 {style}: {prompt[:50]}\n\n{strip_markdown(desc)}")
+        except: await cb.message.answer(f"🎵 {style}: {prompt[:50]}\n\n{strip_markdown(desc)}")
+    except:
+        await cb.message.answer("Ошибка 😕")
+
+@dp.callback_query(F.data.startswith("confirm_"))
+async def cb_confirm(cb: CallbackQuery):
+    action_id = cb.data[8:]
+    action = PENDING_ACTIONS.pop(action_id, None)
+    if not action:
+        await cb.answer("Действие устарело")
+        try: await cb.message.edit_text("❌ Устарело. Повтори.")
+        except: pass
         return
-    style = parts[0]
-    prompt = parts[1]
+    await cb.answer("✅ Выполняю...")
+    try: await cb.message.edit_text(f"⚙️ {action.get('description','...')}")
+    except: pass
+    await execute_action(cb.message, action)
 
-    await callback.answer(f"🎵 Создаю музыку: {style}...")
-    await callback.message.edit_text(f"🎵 Генерирую музыку в стиле {style}...\nЗапрос: {prompt[:50]}")
+@dp.callback_query(F.data.startswith("cancel_"))
+async def cb_cancel(cb: CallbackQuery):
+    action_id = cb.data[7:]
+    PENDING_ACTIONS.pop(action_id, None)
+    await cb.answer("❌ Отменено")
+    try: await cb.message.edit_text("❌ Отменено.")
+    except: pass
 
-    # Пробуем SUNO
-    result = await Tools.generate_music_suno(prompt, style if style != "auto" else "")
-    if result:
-        await callback.message.answer(f"🎵 Музыка создана!\n\nЗапрос: {prompt}\nСтиль: {style}\n\nРезультат: {json.dumps(result, ensure_ascii=False)[:300]}")
-    else:
-        # Если SUNO недоступен — создаём через AI описание музыки
-        msgs = [{"role": "user", "content": f"Опиши подробно, как должна звучать музыкальная композиция в стиле {style} на тему: {prompt}. Включи: инструменты, темп, настроение, структуру, характер звука. Ответь на русском."}]
+@dp.callback_query(F.data.startswith("grp_"))
+async def cb_group(cb: CallbackQuery):
+    chat_id = cb.message.chat.id; uid = cb.from_user.id
+    action = cb.data[4:]
+    if not await is_admin(chat_id, uid):
+        await cb.answer("Только для администраторов"); return
+    if action == "stats":
+        stats = DB.get_group_stats(chat_id)
+        if stats:
+            text = "📊 Статистика:\n\n"
+            medals = ["🥇","🥈","🥉"]
+            for i, s in enumerate(stats[:15], 1):
+                nm = s.get("name") or s.get("username") or f"User{s['uid']}"
+                medal = medals[i-1] if i <= 3 else f"{i}."
+                text += f"{medal} {nm}: {s['messages']} сообщ., {s['words']} слов\n"
+            await cb.message.answer(text)
+        else:
+            await cb.message.answer("Пусто")
+        await cb.answer()
+    elif action == "analytics":
+        await cb.answer("📈...")
+        msgs_data = DB.get_group_messages(chat_id, 200)
+        users_msgs: Dict[int, int] = {}
+        for uid_m, _, _, _ in msgs_data: users_msgs[uid_m] = users_msgs.get(uid_m, 0) + 1
+        hours: Dict[int, int] = {}
+        for _, _, _, ts in msgs_data:
+            try:
+                h = datetime.fromisoformat(ts).hour; hours[h] = hours.get(h, 0) + 1
+            except: pass
+        peak = max(hours, key=hours.get) if hours else 0
+        stats_r = DB.get_group_stats(chat_id)
+        text = (f"📈 Аналитика:\n\nСообщений: {len(msgs_data)}\nАктивных: {len(users_msgs)}\nПик активности: {peak}:00\n\nТоп:\n")
+        for uid_m, cnt in sorted(users_msgs.items(), key=lambda x: -x[1])[:5]:
+            nm = next((s.get("name","?") for s in stats_r if s["uid"] == uid_m), f"User{uid_m}")
+            text += f"• {nm}: {cnt}\n"
+        await cb.message.answer(text)
+    elif action == "clean":
+        action_id = f"clean_{chat_id}_{int(time.time())}"
+        PENDING_ACTIONS[action_id] = {"type":"clean_chat","chat_id":chat_id,"description":"очистить историю"}
+        await cb.message.answer("⚠️ Очистить историю чата?", reply_markup=kb_confirm(action_id,"очистить"))
+        await cb.answer()
+    elif action == "members":
         try:
-            description = await intelligent_response(msgs, max_tokens=500)
-            await callback.message.answer(f"🎵 Описание музыкальной композиции:\n\nСтиль: {style}\nТема: {prompt}\n\n{strip_markdown(description)}\n\n(SUNO API временно недоступен — дай команду /music для повторной попытки)")
-        except:
-            await callback.message.answer("Генерация музыки временно недоступна 😕")
+            count = await bot.get_chat_member_count(chat_id)
+            await cb.message.answer(f"👥 Участников: {count}")
+        except: await cb.message.answer("Не смог получить")
+        await cb.answer()
+    else:
+        await cb.answer()
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ МЕДИА
-# ══════════════════════════════════════════════════════════════════════════════
-
-def extract_video_frame_and_audio(video_path: str) -> Tuple[Optional[str], Optional[str]]:
-    if not FFMPEG:
-        return None, None
-    frame_path = video_path + "_frame.jpg"
-    audio_path = video_path + "_audio.ogg"
-    frame_ok = audio_ok = False
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-i", video_path, "-ss", "00:00:01", "-vframes", "1", "-q:v", "2", "-y", frame_path],
-            capture_output=True, timeout=30
+@dp.callback_query(F.data.startswith("ch_"))
+async def cb_channel(cb: CallbackQuery):
+    chat_id = cb.message.chat.id; uid = cb.from_user.id
+    action = cb.data[3:]
+    if action == "analyze":
+        await cb.answer("📊...")
+        await cb.message.answer("📊 Анализирую...")
+        analysis = await analyze_channel(chat_id)
+        await send_long(cb.message, analysis)
+    elif action == "post":
+        await cb.answer("📝...")
+        post = await generate_channel_post(chat_id)
+        await cb.message.answer(
+            f"📝 Пост:\n\n{strip_markdown(post)}\n\n---\nОпубликовать?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"pub_post_{chat_id}"),
+                InlineKeyboardButton(text="🔄 Другой", callback_data="ch_post"),
+            ]])
         )
-        frame_ok = result.returncode == 0 and os.path.exists(frame_path) and os.path.getsize(frame_path) > 500
-    except Exception as e:
-        logger.error(f"Frame extraction error: {e}")
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libopus", "-b:a", "64k", "-y", audio_path],
-            capture_output=True, timeout=60
-        )
-        audio_ok = result.returncode == 0 and os.path.exists(audio_path) and os.path.getsize(audio_path) > 200
-    except Exception as e:
-        logger.error(f"Audio extraction error: {e}")
-    return (frame_path if frame_ok else None), (audio_path if audio_ok else None)
-
-
-async def handle_video_note_with_question(message: Message, video_note, question: str):
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    await bot.send_chat_action(chat_id, "typing")
-    try:
-        file = await bot.get_file(video_note.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            video_path = tmp.name
-        visual_desc = speech_text = None
-        if FFMPEG:
-            frame_path, audio_path = extract_video_frame_and_audio(video_path)
-            try: os.unlink(video_path)
-            except: pass
-            if frame_path:
-                with open(frame_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                try: os.unlink(frame_path)
-                except: pass
-                visual_desc = await gemini_vision(b64, question or "Опиши что видишь в этом видеокружке")
-            if audio_path:
-                speech_text = await speech_to_text(audio_path)
-                try: os.unlink(audio_path)
-                except: pass
+    elif action == "schedule":
+        await cb.message.answer("⏰ /schedule ЧЧ:ММ тема\nПример: /schedule 09:00 утренние новости")
+        await cb.answer()
+    elif action == "style":
+        await cb.answer()
+        profile = DB.get_channel_profile(chat_id)
+        if profile and profile.get("style"):
+            await cb.message.answer(f"🎨 Стиль:\n\n{profile['style']}")
         else:
-            try: os.unlink(video_path)
+            await cb.message.answer("Стиль не проанализирован. Используй 📊 Анализ")
+    elif action == "cancel":
+        await cb.answer("Отменено")
+    else:
+        await cb.answer()
+
+@dp.callback_query(F.data.startswith("pub_post_"))
+async def cb_pub_post(cb: CallbackQuery):
+    parts = cb.data.split("_")
+    chat_id = int(parts[-1])
+    uid = cb.from_user.id
+    if not await is_admin(chat_id, uid):
+        await cb.answer("Только для администраторов"); return
+    msg_text = cb.message.text or ""
+    if "Пост:\n\n" in msg_text:
+        post_text = msg_text.split("Пост:\n\n")[1].split("\n\n---\n")[0]
+        try:
+            await bot.send_message(chat_id, post_text)
+            await cb.answer("✅ Опубликовано!")
+            try: await cb.message.edit_text("✅ Пост опубликован!")
             except: pass
-        context = f"Пользователь спрашивает: {question}\nВидеокружок — "
-        if visual_desc: context += f"визуально: {visual_desc}. "
-        if speech_text: context += f"говорит: {speech_text}. "
-        if not visual_desc and not speech_text: context += "не удалось проанализировать содержимое."
-        MemoryManager.add_message(uid, chat_id, "user", f"[видеокружок + вопрос] {question}")
-        await process_message(message, context)
-    except Exception as e:
-        logger.error(f"Reply video_note error: {e}")
-        await message.answer("Не удалось обработать видеокружок 😕")
+        except Exception as e:
+            await cb.answer("Ошибка")
+            await cb.message.answer(f"Ошибка: {e}")
+    else:
+        await cb.answer("Текст не найден")
 
-
-async def handle_video_with_question(message: Message, video, question: str, original_caption: str):
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    await bot.send_chat_action(chat_id, "typing")
-    try:
-        file = await bot.get_file(video.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            video_path = tmp.name
-        visual_desc = speech_text = None
-        if FFMPEG:
-            frame_path, audio_path = extract_video_frame_and_audio(video_path)
-            try: os.unlink(video_path)
-            except: pass
-            if frame_path:
-                with open(frame_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                try: os.unlink(frame_path)
-                except: pass
-                visual_desc = await gemini_vision(b64, question or "Опиши что происходит в этом видео")
-            if audio_path:
-                speech_text = await speech_to_text(audio_path)
-                try: os.unlink(audio_path)
-                except: pass
-        else:
-            try: os.unlink(video_path)
-            except: pass
-        context = f"Пользователь спрашивает про видео: {question}. "
-        if original_caption: context += f"Подпись: {original_caption}. "
-        if visual_desc: context += f"Видео: {visual_desc}. "
-        if speech_text: context += f"Говорят: {speech_text}. "
-        await process_message(message, context)
-    except Exception as e:
-        logger.error(f"Reply video error: {e}")
-        await message.answer("Не удалось обработать видео 😕")
-
-
-async def handle_photo_with_question(message: Message, photo, question: str):
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    await bot.send_chat_action(chat_id, "typing")
-    try:
-        file = await bot.get_file(photo.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            photo_path = tmp.name
-        with open(photo_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        os.unlink(photo_path)
-        analysis = await gemini_vision(b64, question)
-        if analysis:
-            MemoryManager.add_message(uid, chat_id, "user", f"[фото с вопросом] {question}")
-            MemoryManager.add_message(uid, chat_id, "assistant", analysis)
-            await message.answer(strip_markdown(analysis))
-        else:
-            await message.answer("Не смог проанализировать фото 😕")
-    except Exception as e:
-        logger.error(f"Reply photo error: {e}")
-        await message.answer("Ошибка обработки фото 😕")
-
-
-async def handle_voice_with_question(message: Message, voice, question: str):
-    await bot.send_chat_action(message.chat.id, "typing")
-    try:
-        file = await bot.get_file(voice.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            audio_path = tmp.name
-        text = await speech_to_text(audio_path)
-        os.unlink(audio_path)
-        if text:
-            await process_message(message, f"{question}\n\nГолосовое сообщение: {text}")
-        else:
-            await message.answer("Не смог разобрать речь в голосовом 🎤")
-    except Exception as e:
-        logger.error(f"Reply voice error: {e}")
-        await message.answer("Ошибка обработки голосового 😕")
+async def execute_action(message, action):
+    atype = action.get("type")
+    chat_id = action.get("chat_id", message.chat.id)
+    if atype == "clean_chat":
+        try:
+            with DB.conn() as conn:
+                rows = conn.execute("SELECT message_id FROM group_messages WHERE chat_id=? AND message_id IS NOT NULL ORDER BY id DESC LIMIT 1000", (chat_id,)).fetchall()
+            ids = [r[0] for r in rows if r[0]]
+            deleted = await delete_messages_bulk(chat_id, ids)
+            await message.answer(f"✅ Удалено {deleted} сообщений.")
+        except Exception as e:
+            await message.answer(f"Ошибка: {e}")
+    elif atype == "delete_keyword":
+        keyword = action.get("keyword","")
+        with DB.conn() as conn:
+            rows = conn.execute("SELECT message_id FROM group_messages WHERE chat_id=? AND LOWER(text) LIKE ? AND message_id IS NOT NULL", (chat_id, f"%{keyword.lower()}%")).fetchall()
+        ids = [r[0] for r in rows if r[0]]
+        deleted = await delete_messages_bulk(chat_id, ids)
+        await message.answer(f"✅ Удалено {deleted} сообщений со словом '{keyword}'.")
+    elif atype == "publish_post":
+        post_text = action.get("post_text","")
+        target_chat = action.get("target_chat", chat_id)
+        if post_text:
+            try:
+                await bot.send_message(target_chat, post_text)
+                await message.answer("✅ Пост опубликован!")
+            except Exception as e:
+                await message.answer(f"Ошибка: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TELEGRAM ХЭНДЛЕРЫ
+# МЕДИА
+# ══════════════════════════════════════════════════════════════════════════════
+
+def extract_video_parts(video_path):
+    if not FFMPEG: return None, None
+    frame_p = video_path + "_f.jpg"; audio_p = video_path + "_a.ogg"
+    fo = ao = False
+    try:
+        r = subprocess.run(["ffmpeg","-i",video_path,"-ss","00:00:01","-vframes","1","-q:v","2","-y",frame_p], capture_output=True, timeout=30)
+        fo = r.returncode==0 and os.path.exists(frame_p) and os.path.getsize(frame_p)>500
+    except: pass
+    try:
+        r = subprocess.run(["ffmpeg","-i",video_path,"-vn","-acodec","libopus","-b:a","64k","-y",audio_p], capture_output=True, timeout=60)
+        ao = r.returncode==0 and os.path.exists(audio_p) and os.path.getsize(audio_p)>200
+    except: pass
+    return (frame_p if fo else None), (audio_p if ao else None)
+
+async def analyze_video(message, file_id, caption=""):
+    uid = message.from_user.id; chat_id = message.chat.id
+    try:
+        file = await bot.get_file(file_id)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            await bot.download_file(file.file_path, tmp.name); vp = tmp.name
+        vis = speech = None
+        if FFMPEG:
+            fp, ap = extract_video_parts(vp)
+            try: os.unlink(vp)
+            except: pass
+            if fp:
+                with open(fp,"rb") as f: b64 = base64.b64encode(f.read()).decode()
+                try: os.unlink(fp)
+                except: pass
+                vis = await gemini_vision(b64, caption or "Опиши что на кадре из видео.")
+            if ap:
+                speech = await speech_to_text(ap)
+                try: os.unlink(ap)
+                except: pass
+        else:
+            try: os.unlink(vp)
+            except: pass
+        parts_r = []
+        if vis: parts_r.append(f"👁 {vis[:400]}")
+        if speech: parts_r.append(f"🎤 {speech[:300]}")
+        if parts_r: await message.answer("📹 " + "\n\n".join(parts_r))
+        ctx = "Пользователь прислал видео. "
+        if caption: ctx += f"Подпись: {caption}. "
+        if vis: ctx += f"На видео: {vis}. "
+        if speech: ctx += f"Говорят: {speech}. "
+        await process_message(message, ctx)
+    except Exception as e: logger.error(f"Video err: {e}"); await message.answer("Не смог обработать видео 😕")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# КОМАНДЫ
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     name = (message.from_user.first_name or "").strip()
     uid = message.from_user.id
-    MemoryManager.ensure_user(uid, name, message.from_user.username or "")
-
-    greeting = f"Привет, {name}!" if name else "Привет!"
-    welcome = (
-        f"{greeting} Я NEXUM v3.0 — AI нового поколения. 🤖\n\n"
-        "Что умею:\n\n"
-        "💬 Отвечаю без ограничений на ЛЮБОМ языке мира\n"
-        "💻 Код на любом языке — пишу, отлаживаю, объясняю\n"
-        "🎨 Генерирую изображения (10 стилей: аниме, 3D, реализм...)\n"
-        "🎬 Генерирую видео по описанию\n"
-        "🎵 Создаю музыку через SUNO AI\n"
-        "🔊 Озвучиваю ЖИВЫМ голосом без акцента (50+ голосов)\n"
-        "👁 Анализирую фото, видео, кружочки, голосовые\n"
-        "📥 Скачиваю с YouTube, TikTok, Instagram и др. (MP3/MP4/WAV)\n"
-        "🔍 Поиск в интернете, чтение сайтов\n"
-        "📊 Статистика и аналитика группы\n"
-        "♾️ Помню тебя вечно — каждый чат изолирован\n\n"
-        "Команды: /help /voice /stats /clear /myfacts\n\n"
+    DB.ensure_user(uid, name, message.from_user.username or "")
+    g = f"Привет, {name}!" if name else "Привет!"
+    await message.answer(
+        f"{g} Я NEXUM v4.0 — AI нового поколения. 🤖\n\n"
+        "Умею:\n"
+        "💬 Отвечаю на любом языке как носитель\n"
+        "🎨 Генерирую реалистичные фото (10 стилей)\n"
+        "🎬 Генерирую видео\n"
+        "🎵 Создаю музыку\n"
+        "🔊 Озвучиваю живым голосом (50+ голосов, WAV/MP3)\n"
+        "📥 Скачиваю YouTube, TikTok, Instagram (MP3/MP4/WAV)\n"
+        "👁 Анализирую фото, видео, голосовые\n"
+        "📊 Управляю группами и каналами\n"
+        "🗑 Удаляю сообщения по ключевому слову\n"
+        "🔍 Ищу актуальную информацию\n"
+        "♾️ Помню тебя вечно\n\n"
+        "/help — все команды\n\n"
         "Напиши что нужно 👇"
     )
-    await message.answer(welcome)
-
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
-        "NEXUM v3.0 — AI без ограничений\n\n"
-        "Команды:\n"
-        "/start — перезапустить\n"
-        "/voice — выбрать голос для озвучки\n"
-        "/clear — очистить историю чата\n"
-        "/myname Имя — сохранить своё имя\n"
-        "/myfacts — что я о тебе знаю\n"
-        "/stats — твоя статистика\n"
+        "NEXUM v4.0 — AI без границ\n\n"
+        "Основные:\n"
+        "/start /help /voice /clear /stats /myfacts /myname\n\n"
+        "Группа и канал:\n"
         "/groupstats — статистика группы\n"
-        "/improve — самоанализ кода бота\n\n"
-        "Умею:\n"
-        "• Общаться на ЛЮБОМ языке как носитель\n"
-        "• Генерировать изображения (10 стилей)\n"
-        "• Генерировать видео и музыку\n"
-        "• Озвучивать ЖИВЫМ голосом (50+ голосов, WAV/MP3)\n"
-        "• Скачивать с YouTube, TikTok, Instagram (MP3/MP4/WAV)\n"
-        "• Анализировать фото, видео, кружки, голосовые\n"
-        "• Читать документы и ссылки\n"
-        "• Поиск в интернете\n"
-        "• Статистика группы\n"
-        "• Напоминания, погода, курсы валют\n\n"
-        "Просто напиши что нужно — я пойму!\n"
-        "В группе: отвечаю на @упоминание или reply ♾️"
+        "/manage — управление группой (для админов)\n"
+        "/channel — управление каналом\n"
+        "/schedule ЧЧ:ММ тема — автопосты\n"
+        "/delete слово — удалить сообщения\n"
+        "/post тема — написать пост\n"
+        "/improve — анализ кода бота\n\n"
+        "В группе: @упоминание или reply на мои сообщения"
     )
-
 
 @dp.message(Command("voice"))
 async def cmd_voice(message: Message):
-    await message.answer(
-        "🎙 Выбери голос для озвучки:\n\n"
-        "После выбора все TTS будут использовать этот голос.\n"
-        "Каждый голос — реальный нейронный TTS без акцента.",
-        reply_markup=get_voice_keyboard()
-    )
-
+    await message.answer("🎙 Выбери голос:", reply_markup=kb_voice())
 
 @dp.message(Command("clear"))
 async def cmd_clear(message: Message):
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    MemoryManager.clear_history(uid, chat_id)
-    await message.answer(
-        "🧹 История этого чата очищена!\n\n"
-        "Но я по-прежнему помню важное о тебе. ♾️"
-    )
-
+    DB.clear_history(message.from_user.id, message.chat.id)
+    await message.answer("🧹 История очищена! Факты сохранены.")
 
 @dp.message(Command("myname"))
 async def cmd_myname(message: Message):
     parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Напиши: /myname ТвоёИмя")
-        return
+    if len(parts) < 2: await message.answer("/myname ТвоёИмя"); return
     name = parts[1].strip()[:30]
-    uid = message.from_user.id
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE users SET name = ? WHERE uid = ?", (name, uid))
-    conn.commit()
-    conn.close()
-    MemoryManager.add_memory(uid, f"Зовут {name}", "identity", 10)
+    with DB.conn() as conn: conn.execute("UPDATE users SET name=? WHERE uid=?", (name, message.from_user.id))
+    DB.add_memory(message.from_user.id, f"Зовут {name}", "identity", 10)
     await message.answer(f"Запомнил, {name}! 👊")
-
 
 @dp.message(Command("myfacts"))
 async def cmd_myfacts(message: Message):
-    user = MemoryManager.get_user(message.from_user.id)
-    memories = user.get("memories", [])
-    if not memories:
-        await message.answer("Пока я ничего о тебе не знаю 🤔\n\nРасскажи что-нибудь о себе!")
-        return
-    by_category: Dict[str, List[str]] = {}
-    for mem in memories:
-        by_category.setdefault(mem["category"], []).append(mem["fact"])
-    text = "📝 Что я знаю о тебе:\n\n"
-    for cat, facts in by_category.items():
-        text += f"【{cat.upper()}】\n"
-        for fact in facts[:5]:
-            text += f"  • {fact}\n"
-        text += "\n"
+    user = DB.get_user(message.from_user.id)
+    memories = user.get("memories",[])
+    if not memories: await message.answer("Пока ничего не знаю\nРасскажи что-нибудь!"); return
+    by_cat: Dict[str, List] = {}
+    for m in memories: by_cat.setdefault(m["category"],[]).append(m["fact"])
+    text = "📝 Что знаю о тебе:\n\n"
+    for cat, facts in by_cat.items():
+        text += f"[{cat.upper()}]\n" + "".join(f"  • {f}\n" for f in facts[:5]) + "\n"
     await message.answer(text)
-
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     uid = message.from_user.id
-    user = MemoryManager.get_user(uid)
-    if not user:
-        await message.answer("Мы ещё не знакомы! Напиши /start")
-        return
-    name = user.get("name") or "Без имени"
-    total = user.get("total_messages", 0)
-    first = (user.get("first_seen") or "")[:10]
-    facts_cnt = len(user.get("memories", []))
-    summaries = MemoryManager.get_chat_summaries(uid, message.chat.id)
-    voice = MemoryManager.get_user_voice(uid)
+    user = DB.get_user(uid)
+    if not user: await message.answer("/start"); return
+    voice = DB.get_voice(uid)
     voice_name = EDGE_TTS_VOICES.get(voice, "Авто") if voice != "auto" else "Авто"
     await message.answer(
-        f"📊 Твоя статистика:\n\n"
-        f"👤 {name}\n"
-        f"💬 Сообщений: {total}\n"
-        f"🧠 Фактов в памяти: {facts_cnt}\n"
-        f"♾️ Саммари разговоров: {len(summaries)}\n"
+        f"📊 Статистика:\n\n"
+        f"👤 {user.get('name','Без имени')}\n"
+        f"💬 Сообщений: {user.get('total_messages',0)}\n"
+        f"🧠 Фактов: {len(user.get('memories',[]))}\n"
         f"🎙 Голос: {voice_name}\n"
-        f"📅 Знакомы с: {first}"
+        f"📅 С: {(user.get('first_seen') or '')[:10]}"
     )
-
 
 @dp.message(Command("groupstats"))
 async def cmd_groupstats(message: Message):
-    chat_id = message.chat.id
-    stats = get_group_stats(chat_id)
-    if not stats:
-        await message.answer("Статистика группы пустая — участники ещё не писали при мне 📊")
-        return
+    stats = DB.get_group_stats(message.chat.id)
+    if not stats: await message.answer("Статистика пустая 📊"); return
+    medals = ["🥇","🥈","🥉"]
     text = "📊 Статистика группы:\n\n"
-    medals = ["🥇", "🥈", "🥉"]
     for i, s in enumerate(stats[:15], 1):
-        name_s = s.get("name") or s.get("username") or f"User{s['uid']}"
-        medal = medals[i - 1] if i <= 3 else f"{i}."
-        text += f"{medal} {name_s}: {s['messages']} сообщ., {s['words']} слов"
-        if s.get("media"):
-            text += f", {s['media']} медиа"
+        nm = s.get("name") or s.get("username") or f"User{s['uid']}"
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        text += f"{medal} {nm}: {s['messages']} сообщ., {s['words']} слов"
+        if s.get("media"): text += f", {s['media']} медиа"
         text += "\n"
-    await message.answer(text)
+    await message.answer(text, reply_markup=kb_group_manage())
 
+@dp.message(Command("manage"))
+async def cmd_manage(message: Message):
+    uid = message.from_user.id; chat_id = message.chat.id
+    if not await is_admin(chat_id, uid):
+        await message.answer("Только для администраторов."); return
+    await message.answer("⚙️ Управление группой:", reply_markup=kb_group_manage())
+
+@dp.message(Command("channel"))
+async def cmd_channel(message: Message):
+    await message.answer("📺 Управление каналом:", reply_markup=kb_channel_manage())
+
+@dp.message(Command("schedule"))
+async def cmd_schedule(message: Message):
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Использование: /schedule ЧЧ:ММ тема\nПример: /schedule 09:00 утренние новости"); return
+    uid = message.from_user.id; chat_id = message.chat.id
+    if not await is_admin(chat_id, uid):
+        await message.answer("Только для администраторов"); return
+    time_str = parts[1]; topic = parts[2]
+    try:
+        h, m = map(int, time_str.split(":"))
+        cron = f"{m} {h} * * *"
+        DB.add_scheduled_post(chat_id, cron, topic)
+        scheduler.add_job(scheduled_post_job, trigger=CronTrigger(hour=h, minute=m),
+            args=[chat_id, topic], id=f"post_{chat_id}_{h}_{m}", replace_existing=True)
+        await message.answer(f"✅ Расписание: каждый день в {time_str}\nТема: {topic}")
+    except ValueError:
+        await message.answer("Неверный формат. Используй ЧЧ:ММ")
+
+async def scheduled_post_job(chat_id, topic):
+    try:
+        post = await generate_channel_post(chat_id, topic)
+        await bot.send_message(chat_id, strip_markdown(post))
+        logger.info(f"Scheduled post sent to {chat_id}")
+    except Exception as e:
+        logger.error(f"Scheduled post err: {e}")
+
+@dp.message(Command("delete"))
+async def cmd_delete(message: Message):
+    uid = message.from_user.id; chat_id = message.chat.id
+    if not await is_admin(chat_id, uid):
+        await message.answer("Только для администраторов"); return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /delete слово"); return
+    keyword = parts[1].strip()
+    action_id = f"delkw_{chat_id}_{int(time.time())}"
+    PENDING_ACTIONS[action_id] = {"type":"delete_keyword","chat_id":chat_id,"keyword":keyword,"description":f"удалить сообщения со словом '{keyword}'"}
+    await message.answer(f"⚠️ Удалить все сообщения со словом '{keyword}'?", reply_markup=kb_confirm(action_id,"удалить"))
+
+@dp.message(Command("post"))
+async def cmd_post(message: Message):
+    parts = message.text.split(maxsplit=1)
+    topic = parts[1].strip() if len(parts) > 1 else ""
+    await message.answer("📝 Генерирую пост...")
+    try:
+        post = await generate_channel_post(message.chat.id, topic)
+        await message.answer(
+            f"📝 Пост:\n\n{strip_markdown(post)}\n\n---\nОпубликовать?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"pub_post_{message.chat.id}"),
+                InlineKeyboardButton(text="🔄 Другой", callback_data="ch_post"),
+            ]])
+        )
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
 
 @dp.message(Command("improve"))
 async def cmd_improve(message: Message):
     await bot.send_chat_action(message.chat.id, "typing")
-    await message.answer("🔍 Анализирую код NEXUM...")
+    await message.answer("🔍 Анализирую NEXUM v4.0...")
     try:
-        with open(__file__, "r", encoding="utf-8") as f:
-            source = f.read()
-        source_chunk = source[:8000]
-        prompt = f"""Ты эксперт Python-разработчик. Проанализируй код Telegram-бота NEXUM v3.0.
+        with open(__file__,"r",encoding="utf-8") as f: source = f.read()
+        prompt = f"""Ты Python эксперт. Проанализируй бот NEXUM v4.0.
 
-КОД:
-```python
-{source_chunk}
-```
+КОД (первые 6000 символов):
+{source[:6000]}
 
-Структура ответа:
-1. НАЙДЕННЫЕ БАГИ
-2. УЛУЧШЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ
-3. НОВЫЕ ФУНКЦИИ (5 идей с кодом)
-4. ПРИОРИТЕТ
+Дай:
+1. КРИТИЧЕСКИЕ БАГИ — что сломано
+2. УЛУЧШЕНИЯ — что лучше
+3. НОВЫЕ ФУНКЦИИ — 5 идей
+4. ОПТИМИЗАЦИЯ
 
-Будь конкретным."""
-        msgs = [{"role": "user", "content": prompt}]
-        suggestions = await intelligent_response(msgs, max_tokens=3000)
-        full = f"🧠 Анализ завершён!\n\n{suggestions}"
-        while len(full) > 0:
-            await message.answer(full[:4000])
-            full = full[4000:]
+Конкретно, с примерами кода."""
+        suggestions = await ai_generate([{"role":"user","content":prompt}], max_tokens=3000, task_type="code")
+        await send_long(message, f"🧠 Анализ:\n\n{suggestions}")
     except Exception as e:
-        logger.error(f"Improve error: {e}")
         await message.answer(f"Ошибка: {e}")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ХЭНДЛЕРЫ СООБЩЕНИЙ
+# ══════════════════════════════════════════════════════════════════════════════
 
 @dp.message(F.text)
 async def handle_text(message: Message):
     text = message.text or ""
+    uid = message.from_user.id
+    chat_id = message.chat.id
+    chat_type = message.chat.type
 
-    if message.chat.type in ("group", "supergroup"):
-        # Обновляем статистику для любого сообщения в группе
-        update_group_stats(
-            message.chat.id,
-            message.from_user.id,
-            message.from_user.first_name or "",
-            message.from_user.username or "",
-            text=text
-        )
+    if chat_type in ("group","supergroup","channel"):
+        DB.update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", text=text)
 
+    if chat_type in ("group","supergroup"):
         try:
             me = await bot.get_me()
             my_id = me.id
             my_username = f"@{(me.username or '').lower()}"
             mentioned = False
-
             if message.entities:
-                for entity in message.entities:
-                    if entity.type == "mention":
-                        mention = text[entity.offset:entity.offset + entity.length].lower()
-                        if mention == my_username:
-                            mentioned = True
-                            break
-                    elif entity.type == "text_mention" and entity.user:
-                        if entity.user.id == my_id:
-                            mentioned = True
-                            break
-
+                for e in message.entities:
+                    if e.type == "mention" and text[e.offset:e.offset+e.length].lower() == my_username:
+                        mentioned = True; break
+                    elif e.type == "text_mention" and e.user and e.user.id == my_id:
+                        mentioned = True; break
             if not mentioned and my_username and my_username in text.lower():
                 mentioned = True
-
-            replied = (
-                message.reply_to_message is not None and
-                message.reply_to_message.from_user is not None and
-                message.reply_to_message.from_user.id == my_id
-            )
-
-            if not mentioned and not replied:
-                return
-
+            replied = (message.reply_to_message and message.reply_to_message.from_user and
+                      message.reply_to_message.from_user.id == my_id)
+            if not mentioned and not replied: return
             if me.username:
-                text = re.sub(rf'@{me.username}\s*', '', text, flags=re.IGNORECASE).strip()
+                text = re.sub(rf'@{me.username}\s*','',text,flags=re.IGNORECASE).strip()
             text = text or "привет"
+        except Exception as e: logger.error(f"Group err: {e}"); return
 
-        except Exception as e:
-            logger.error(f"Group handling error: {e}")
-            return
-
-    # Reply на медиа
     reply = message.reply_to_message
     if reply:
-        if reply.video_note:
-            await handle_video_note_with_question(message, reply.video_note, text)
-            return
-        elif reply.video:
-            await handle_video_with_question(message, reply.video, text, reply.caption or "")
-            return
-        elif reply.photo:
-            await handle_photo_with_question(message, reply.photo[-1], text or "Опиши что на фото")
-            return
-        elif reply.voice:
-            await handle_voice_with_question(message, reply.voice, text)
-            return
+        if reply.video_note: await handle_vidnote_q(message, reply.video_note, text); return
+        elif reply.video: await analyze_video(message, reply.video.file_id, text or reply.caption or ""); return
+        elif reply.photo: await handle_photo_q(message, reply.photo[-1], text or "Опиши фото"); return
+        elif reply.voice: await handle_voice_q(message, reply.voice, text); return
 
-    await process_message(message, text)
+    ttype = "general"
+    tl = text.lower()
+    if any(k in tl for k in ["код","функция","скрипт","python","javascript","программ","def ","class "]): ttype = "code"
+    elif any(k in tl for k in ["новости","сегодня","текущий","актуальн","2025","2026","цена","курс"]): ttype = "analysis"
+    elif any(k in tl for k in ["напиши","стихотворение","рассказ","история","стиль","творч"]): ttype = "creative"
 
+    await process_message(message, text, ttype)
 
 @dp.message(F.voice)
 async def handle_voice(message: Message):
-    await bot.send_chat_action(message.chat.id, "typing")
-    if message.chat.type in ("group", "supergroup"):
-        update_group_stats(message.chat.id, message.from_user.id, message.from_user.first_name or "", message.from_user.username or "", is_media=True)
+    uid = message.from_user.id; chat_id = message.chat.id
+    if message.chat.type in ("group","supergroup"):
+        DB.update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", msg_type="voice")
+    await bot.send_chat_action(chat_id, "typing")
     try:
         file = await bot.get_file(message.voice.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            audio_path = tmp.name
-        text = await speech_to_text(audio_path)
-        os.unlink(audio_path)
+        with tempfile.NamedTemporaryFile(suffix=".ogg",delete=False) as tmp:
+            await bot.download_file(file.file_path,tmp.name); ap = tmp.name
+        text = await speech_to_text(ap)
+        try: os.unlink(ap)
+        except: pass
         if not text or len(text.strip()) < 2:
-            await message.answer("🎤 Не удалось распознать речь. Попробуй ещё раз.")
-            return
-        await message.answer(f"🎤 <i>{text}</i>", parse_mode="HTML")
+            await message.answer("🎤 Не распознал речь. Попробуй ещё раз."); return
+        await message.answer(f"🎤 {text}")
         await process_message(message, text)
-    except Exception as e:
-        logger.error(f"Voice error: {e}")
-        await message.answer("Ошибка обработки голосового 😕")
-
+    except Exception as e: logger.error(f"Voice err: {e}"); await message.answer("Ошибка голосового 😕")
 
 @dp.message(F.video_note)
-async def handle_video_note(message: Message):
-    uid = message.from_user.id
-    chat_id = message.chat.id
+async def handle_vidnote(message: Message):
+    uid = message.from_user.id; chat_id = message.chat.id
+    if message.chat.type in ("group","supergroup"):
+        DB.update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", msg_type="video_note")
     await bot.send_chat_action(chat_id, "typing")
-    if message.chat.type in ("group", "supergroup"):
-        update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", is_media=True)
     try:
         file = await bot.get_file(message.video_note.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            video_path = tmp.name
-
-        visual_description = speech_text = None
+        with tempfile.NamedTemporaryFile(suffix=".mp4",delete=False) as tmp:
+            await bot.download_file(file.file_path,tmp.name); vp = tmp.name
+        vis = speech = None
         if FFMPEG:
-            frame_path, audio_path = extract_video_frame_and_audio(video_path)
-            try: os.unlink(video_path)
+            fp, ap = extract_video_parts(vp)
+            try: os.unlink(vp)
             except: pass
-            if frame_path:
-                with open(frame_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                try: os.unlink(frame_path)
+            if fp:
+                with open(fp,"rb") as f: b64 = base64.b64encode(f.read()).decode()
+                try: os.unlink(fp)
                 except: pass
-                visual_description = await gemini_vision(b64, "Опиши что видишь на этом кадре из видеосообщения: кто, что делает, эмоции, обстановка. Коротко.")
-            if audio_path:
-                speech_text = await speech_to_text(audio_path)
-                try: os.unlink(audio_path)
+                vis = await gemini_vision(b64,"Опиши кружочек: кто, что делает, эмоции.")
+            if ap:
+                speech = await speech_to_text(ap)
+                try: os.unlink(ap)
                 except: pass
         else:
-            speech_text = await speech_to_text(video_path)
-            try: os.unlink(video_path)
+            try: os.unlink(vp)
             except: pass
-
-        parts = []
-        if visual_description: parts.append(f"👁 {visual_description[:300]}")
-        if speech_text: parts.append(f"🎤 {speech_text}")
-        if parts:
-            await message.answer("📹 " + "\n\n".join(parts))
-
-        context = "Пользователь прислал видеокружок. "
-        if visual_description: context += f"На видео: {visual_description}. "
-        if speech_text: context += f"Говорит: {speech_text}. "
-        if not visual_description and not speech_text: context += "Не удалось проанализировать."
-
-        await process_message(message, context + " Ответь естественно.")
-    except Exception as e:
-        logger.error(f"Video note error: {e}")
-        await message.answer("Не удалось обработать кружочек 😕")
-
+        parts_r = []
+        if vis: parts_r.append(f"👁 {vis[:300]}")
+        if speech: parts_r.append(f"🎤 {speech}")
+        if parts_r: await message.answer("📹 " + "\n\n".join(parts_r))
+        ctx = "Пользователь прислал видеокружок. "
+        if vis: ctx += f"Видео: {vis}. "
+        if speech: ctx += f"Говорит: {speech}. "
+        if not vis and not speech: ctx += "Не удалось проанализировать."
+        await process_message(message, ctx)
+    except Exception as e: logger.error(f"Vidnote err: {e}"); await message.answer("Не смог обработать кружочек 😕")
 
 @dp.message(F.video)
 async def handle_video(message: Message):
-    uid = message.from_user.id
-    chat_id = message.chat.id
+    uid = message.from_user.id; chat_id = message.chat.id
+    if message.chat.type in ("group","supergroup"):
+        DB.update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", msg_type="video")
     await bot.send_chat_action(chat_id, "typing")
-    if message.chat.type in ("group", "supergroup"):
-        update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", is_media=True)
-    caption = message.caption or ""
-    try:
-        file = await bot.get_file(message.video.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            video_path = tmp.name
-
-        visual_description = speech_text = None
-        if FFMPEG:
-            frame_path, audio_path = extract_video_frame_and_audio(video_path)
-            try: os.unlink(video_path)
-            except: pass
-            if frame_path:
-                with open(frame_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
-                try: os.unlink(frame_path)
-                except: pass
-                prompt_vis = caption or "Что происходит на этом кадре из видео? Опиши подробно."
-                visual_description = await gemini_vision(b64, prompt_vis)
-            if audio_path:
-                speech_text = await speech_to_text(audio_path)
-                try: os.unlink(audio_path)
-                except: pass
-        else:
-            speech_text = await speech_to_text(video_path)
-            try: os.unlink(video_path)
-            except: pass
-
-        parts = []
-        if visual_description: parts.append(f"👁 {visual_description[:400]}")
-        if speech_text: parts.append(f"🎤 {speech_text[:300]}")
-        if parts:
-            await message.answer("📹 " + "\n\n".join(parts))
-
-        context = "Пользователь прислал видео. "
-        if caption: context += f"Подпись: {caption}. "
-        if visual_description: context += f"Визуально: {visual_description}. "
-        if speech_text: context += f"Говорят: {speech_text}. "
-        await process_message(message, context)
-    except Exception as e:
-        logger.error(f"Video error: {e}")
-        await message.answer("Не удалось обработать видео 😕")
-
+    await analyze_video(message, message.video.file_id, message.caption or "")
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    if message.chat.type in ("group", "supergroup"):
-        update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", is_media=True)
-    caption = message.caption or "Опиши подробно что на этом фото"
+    uid = message.from_user.id; chat_id = message.chat.id
+    if message.chat.type in ("group","supergroup"):
+        DB.update_group_stats(chat_id, uid, message.from_user.first_name or "", message.from_user.username or "", msg_type="photo")
+    caption = message.caption or "Опиши подробно что на фото"
     await bot.send_chat_action(chat_id, "typing")
     try:
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            photo_path = tmp.name
-        with open(photo_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        os.unlink(photo_path)
+        with tempfile.NamedTemporaryFile(suffix=".jpg",delete=False) as tmp:
+            await bot.download_file(file.file_path,tmp.name); pp = tmp.name
+        with open(pp,"rb") as f: b64 = base64.b64encode(f.read()).decode()
+        try: os.unlink(pp)
+        except: pass
         analysis = await gemini_vision(b64, caption)
         if analysis:
-            MemoryManager.add_message(uid, chat_id, "user", f"[фото] {caption}")
-            MemoryManager.add_message(uid, chat_id, "assistant", analysis)
+            DB.add_msg(uid, chat_id, "user", f"[фото] {caption}")
+            DB.add_msg(uid, chat_id, "assistant", analysis)
             await message.answer(strip_markdown(analysis))
         else:
             await message.answer("Не смог проанализировать фото 😕")
-    except Exception as e:
-        logger.error(f"Photo error: {e}")
-        await message.answer("Ошибка обработки фото 😕")
-
+    except Exception as e: logger.error(f"Photo err: {e}"); await message.answer("Ошибка 😕")
 
 @dp.message(F.document)
-async def handle_document(message: Message):
+async def handle_doc(message: Message):
     caption = message.caption or "Проанализируй этот файл"
+    if message.chat.type in ("group","supergroup"):
+        DB.update_group_stats(message.chat.id, message.from_user.id, message.from_user.first_name or "", message.from_user.username or "", msg_type="document")
     await bot.send_chat_action(message.chat.id, "typing")
-    if message.chat.type in ("group", "supergroup"):
-        update_group_stats(message.chat.id, message.from_user.id, message.from_user.first_name or "", message.from_user.username or "", is_media=True)
     try:
         file = await bot.get_file(message.document.file_id)
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            file_path = tmp.name
+            await bot.download_file(file.file_path,tmp.name); fp = tmp.name
         try:
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()[:10000]
-        except:
-            content = "[Не удалось прочитать содержимое файла]"
-        os.unlink(file_path)
-        filename = message.document.file_name or "файл"
-        await process_message(message, f"{caption}\n\nФайл '{filename}':\n{content}")
-    except Exception as e:
-        logger.error(f"Document error: {e}")
-        await message.answer("Не удалось прочитать файл 😕")
-
-
-@dp.message(F.sticker)
-async def handle_sticker(message: Message):
-    await process_message(message, "[стикер] Отреагируй живо и коротко, как настоящий друг!")
-
-
-@dp.message(F.location)
-async def handle_location(message: Message):
-    lat = message.location.latitude
-    lon = message.location.longitude
-    weather = await Tools.get_weather(f"{lat},{lon}")
-    if weather:
-        await message.answer(f"📍 Погода в твоей точке:\n\n{weather}")
-    else:
-        await message.answer("📍 Получил твою геолокацию!")
-
+            with open(fp,"r",encoding="utf-8",errors="ignore") as f: content = f.read()[:12000]
+        except: content = "[Не удалось прочитать]"
+        try: os.unlink(fp)
+        except: pass
+        fname = message.document.file_name or "файл"
+        await process_message(message, f"{caption}\n\nФайл '{fname}':\n{content}", task_type="analysis")
+    except Exception as e: logger.error(f"Doc err: {e}"); await message.answer("Не удалось прочитать 😕")
 
 @dp.message(F.audio)
 async def handle_audio(message: Message):
-    """Обработчик аудиофайлов — транскрибирует и предлагает действия"""
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    await bot.send_chat_action(chat_id, "typing")
-    caption = message.caption or ""
+    await bot.send_chat_action(message.chat.id, "typing")
     try:
         file = await bot.get_file(message.audio.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            await bot.download_file(file.file_path, tmp.name)
-            audio_path = tmp.name
-        text = await speech_to_text(audio_path)
-        os.unlink(audio_path)
+        with tempfile.NamedTemporaryFile(suffix=".mp3",delete=False) as tmp:
+            await bot.download_file(file.file_path,tmp.name); ap = tmp.name
+        text = await speech_to_text(ap)
+        try: os.unlink(ap)
+        except: pass
         if text:
-            response_text = f"🎵 Транскрипция аудио:\n\n{text}"
-            await message.answer(response_text)
-            if caption:
-                await process_message(message, f"{caption}\n\nАудио содержит: {text}")
+            await message.answer(f"🎵 Транскрипция:\n\n{text}")
         else:
-            audio_name = message.audio.file_name or "аудио"
-            await process_message(message, f"Пользователь прислал аудиофайл '{audio_name}'. {caption}")
+            await process_message(message, f"Пользователь прислал аудио. {message.caption or ''}")
+    except Exception as e: logger.error(f"Audio err: {e}"); await message.answer("Не смог обработать 😕")
+
+@dp.message(F.sticker)
+async def handle_sticker(message: Message):
+    if message.chat.type in ("group","supergroup"):
+        DB.update_group_stats(message.chat.id, message.from_user.id, message.from_user.first_name or "", message.from_user.username or "", msg_type="sticker")
+    await process_message(message, "[стикер] Отреагируй живо как настоящий друг!")
+
+@dp.message(F.location)
+async def handle_location(message: Message):
+    lat = message.location.latitude; lon = message.location.longitude
+    w = await get_weather(f"{lat},{lon}")
+    if w: await message.answer(f"📍 Погода:\n\n{w}")
+    else: await message.answer("📍 Геолокация получена!")
+
+async def handle_vidnote_q(message, vn, q):
+    file = await bot.get_file(vn.file_id)
+    with tempfile.NamedTemporaryFile(suffix=".mp4",delete=False) as tmp:
+        await bot.download_file(file.file_path,tmp.name); vp = tmp.name
+    vis = speech = None
+    if FFMPEG:
+        fp, ap = extract_video_parts(vp)
+        try: os.unlink(vp)
+        except: pass
+        if fp:
+            with open(fp,"rb") as f: b64 = base64.b64encode(f.read()).decode()
+            try: os.unlink(fp)
+            except: pass
+            vis = await gemini_vision(b64, q or "Опиши видеокружок")
+        if ap:
+            speech = await speech_to_text(ap)
+            try: os.unlink(ap)
+            except: pass
+    else:
+        try: os.unlink(vp)
+        except: pass
+    ctx = f"Вопрос: {q}. Видеокружок — "
+    if vis: ctx += f"визуально: {vis}. "
+    if speech: ctx += f"говорит: {speech}. "
+    if not vis and not speech: ctx += "не смог проанализировать."
+    await process_message(message, ctx)
+
+async def handle_photo_q(message, photo, q):
+    uid = message.from_user.id; chat_id = message.chat.id
+    file = await bot.get_file(photo.file_id)
+    with tempfile.NamedTemporaryFile(suffix=".jpg",delete=False) as tmp:
+        await bot.download_file(file.file_path,tmp.name); pp = tmp.name
+    with open(pp,"rb") as f: b64 = base64.b64encode(f.read()).decode()
+    try: os.unlink(pp)
+    except: pass
+    analysis = await gemini_vision(b64, q)
+    if analysis:
+        DB.add_msg(uid, chat_id, "user", f"[фото+вопрос] {q}")
+        DB.add_msg(uid, chat_id, "assistant", analysis)
+        await message.answer(strip_markdown(analysis))
+    else:
+        await message.answer("Не смог проанализировать 😕")
+
+async def handle_voice_q(message, voice, q):
+    await bot.send_chat_action(message.chat.id, "typing")
+    file = await bot.get_file(voice.file_id)
+    with tempfile.NamedTemporaryFile(suffix=".ogg",delete=False) as tmp:
+        await bot.download_file(file.file_path,tmp.name); ap = tmp.name
+    text = await speech_to_text(ap)
+    try: os.unlink(ap)
+    except: pass
+    if text: await process_message(message, f"{q}\n\nГолосовое: {text}")
+    else: await message.answer("Не смог разобрать речь 🎤")
+
+@dp.my_chat_member()
+async def handle_bot_added(update):
+    try:
+        new_status = update.new_chat_member.status
+        chat_id = update.chat.id
+        if new_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR):
+            chat = await bot.get_chat(chat_id)
+            title = chat.title or "Без названия"
+            ctype = chat.type
+            if ctype == "channel":
+                await asyncio.sleep(2)
+                await bot.send_message(chat_id,
+                    f"Привет! Я NEXUM v4.0.\n\nПровожу анализ канала и подстроюсь под его стиль.\n/channel — управление",
+                    reply_markup=kb_channel_manage()
+                )
+                asyncio.create_task(auto_analyze_channel(chat_id, title))
+            elif ctype in ("group","supergroup"):
+                await bot.send_message(chat_id,
+                    f"Привет! Я NEXUM v4.0 — AI для вашей группы.\n\n"
+                    f"@упоминание или reply на мои сообщения.\n/help — команды"
+                )
     except Exception as e:
-        logger.error(f"Audio error: {e}")
-        await message.answer("Не удалось обработать аудио 😕")
+        logger.error(f"Bot added err: {e}")
+
+async def auto_analyze_channel(chat_id, title):
+    try:
+        await asyncio.sleep(5)
+        analysis = await analyze_channel(chat_id)
+        style_prompt = [{"role":"user","content":f"На основе анализа канала '{title}', напиши в 3-5 предложениях КАК писать посты (стиль, тон, длина):\n\n{analysis}"}]
+        style = await ai_generate(style_prompt, max_tokens=300, task_type="analysis")
+        DB.save_channel_profile(chat_id, title, analysis, style)
+        logger.info(f"Channel {chat_id} analyzed")
+    except Exception as e:
+        logger.error(f"Auto analyze err: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ЗАПУСК
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def restore_scheduled_posts():
+    try:
+        with DB.conn() as conn:
+            rows = conn.execute("SELECT chat_id, cron_expr, template FROM scheduled_posts WHERE active=1").fetchall()
+        for chat_id, cron_expr, topic in rows:
+            parts = cron_expr.split()
+            if len(parts) >= 2:
+                m, h = int(parts[0]), int(parts[1])
+                scheduler.add_job(scheduled_post_job, trigger=CronTrigger(hour=h, minute=m),
+                    args=[chat_id, topic], id=f"post_{chat_id}_{h}_{m}", replace_existing=True)
+        logger.info(f"Restored {len(rows)} scheduled posts")
+    except Exception as e:
+        logger.error(f"Restore schedule err: {e}")
+
 async def start_polling():
     init_database()
     scheduler.start()
+    await restore_scheduled_posts()
 
     logger.info("=" * 60)
-    logger.info("NEXUM v3.0 Starting...")
-    logger.info(f"Gemini keys:   {len(GEMINI_KEYS)}")
-    logger.info(f"Groq keys:     {len(GROQ_KEYS)}")
-    logger.info(f"Claude keys:   {len(CLAUDE_KEYS)}")
-    logger.info(f"DeepSeek keys: {len(DEEPSEEK_KEYS)}")
-    logger.info(f"SUNO keys:     {len(SUNO_KEYS)}")
-    logger.info(f"ffmpeg:        {'✅' if FFMPEG else '❌'}")
-    logger.info(f"yt-dlp:        {'✅' if YTDLP else '❌'}")
-    logger.info("Features: inline buttons ✅ | voice choice ✅ | group stats ✅ | WAV ✅ | universal DL ✅ | video gen ✅ | music gen ✅")
+    logger.info("NEXUM v4.0 Starting...")
+    logger.info(f"Gemini:   {len(GEMINI_KEYS)} keys")
+    logger.info(f"Groq:     {len(GROQ_KEYS)} keys")
+    logger.info(f"Claude:   {len(CLAUDE_KEYS)} keys")
+    logger.info(f"DeepSeek: {len(DEEPSEEK_KEYS)} keys")
+    logger.info(f"Grok/xAI: {len(GROK_KEYS)} keys")
+    logger.info(f"SUNO:     {len(SUNO_KEYS)} keys")
+    logger.info(f"ffmpeg:   {'YES' if FFMPEG else 'NO'}")
+    logger.info(f"yt-dlp:   {'YES' if YTDLP else 'NO'}")
     logger.info("=" * 60)
 
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(start_polling())

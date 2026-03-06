@@ -5,6 +5,7 @@
 .env.local
 .env.*.local
 *.env
+!config.example.env
 config_local.py
 secrets.py
 secrets.json

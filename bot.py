@@ -825,43 +825,80 @@ class Tools:
         return None
     
     @staticmethod
+    async def translate_to_english(text: str) -> str:
+        """Переводит текст на английский для промптов изображений."""
+        if not re.search(r'[а-яёА-ЯЁ\u0400-\u04FF]', text):
+            return text  # Уже латиница
+        try:
+            msgs = [{"role": "user", "content": f"Translate to English for image generation, respond ONLY with the translation, no extra words:\n{text}"}]
+            result = await gemini_generate(msgs, max_tokens=120, temperature=0.3)
+            if result and result.strip():
+                return result.strip()
+        except Exception:
+            pass
+        return text
+
+    @staticmethod
+    def _is_image_bytes(data: bytes) -> bool:
+        """Проверяет что байты — реальное изображение по magic bytes."""
+        if len(data) < 8:
+            return False
+        # JPEG: FF D8 FF
+        if data[:3] == b'\xff\xd8\xff':
+            return True
+        # PNG: 89 50 4E 47
+        if data[:4] == b'\x89PNG':
+            return True
+        # WEBP: RIFF....WEBP
+        if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+            return True
+        # GIF
+        if data[:3] == b'GIF':
+            return True
+        return False
+
+    @staticmethod
     async def generate_image(prompt: str) -> Optional[bytes]:
-        """Генерация изображения через Pollinations (flux / turbo / schnell)"""
+        """Генерация изображения через Pollinations AI."""
+
+        # Переводим промпт в английский (модели работают лучше с EN)
+        en_prompt = await Tools.translate_to_english(prompt)
+        logger.info(f"Image prompt: {prompt!r} -> {en_prompt!r}")
 
         seed = random.randint(1, 999999)
-        # Правильная URL-кодировка через urllib
-        encoded = url_quote(prompt[:400], safe='')
+        encoded = url_quote(en_prompt[:500], safe='')
 
-        # Пробуем разные модели: flux → turbo → schnell
-        attempts = [
-            (encoded, "flux",    1024, 1024),
-            (encoded, "turbo",   1024, 1024),
-            (encoded, "schnell", 1024, 1024),
-            (encoded, "flux",     768,  768),
+        # Варианты запросов — от самого надёжного к запасным
+        urls = [
+            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}&model=flux",
+            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&seed={seed}",
+            f"https://image.pollinations.ai/prompt/{encoded}?width=768&height=768&nologo=true&seed={seed}&model=turbo",
+            f"https://image.pollinations.ai/prompt/{encoded}?nologo=true&seed={seed}",
         ]
 
-        for enc, model, w, h in attempts:
-            url = (
-                f"https://image.pollinations.ai/prompt/{enc}"
-                f"?width={w}&height={h}&nologo=true&seed={seed}&model={model}"
-            )
+        connector = aiohttp.TCPConnector(ssl=False)
+        for url in urls:
             try:
-                async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(connector=connector) as session:
                     async with session.get(
                         url,
-                        timeout=aiohttp.ClientTimeout(total=90),
-                        headers={"User-Agent": "Mozilla/5.0"}
-                    ) as response:
-                        if response.status == 200:
-                            ctype = response.headers.get("content-type", "")
-                            if "image" in ctype:
-                                data = await response.read()
-                                if len(data) > 5000:
-                                    logger.info(f"Image generated via {model} ({w}x{h})")
-                                    return data
+                        timeout=aiohttp.ClientTimeout(total=120),
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                        allow_redirects=True,
+                        max_redirects=10,
+                    ) as resp:
+                        logger.info(f"Pollinations status={resp.status} url={url[:80]}")
+                        if resp.status == 200:
+                            data = await resp.read()
+                            logger.info(f"Data size={len(data)}, first bytes={data[:4].hex()}")
+                            if Tools._is_image_bytes(data):
+                                return data
+                            else:
+                                logger.warning(f"Not an image: {data[:200]}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Pollinations timeout: {url[:80]}")
             except Exception as e:
-                logger.error(f"Image gen error ({model}): {e}")
-                continue
+                logger.error(f"Image gen error: {e}")
 
         return None
     
@@ -979,14 +1016,41 @@ class Tools:
             return None, str(e)
     
     @staticmethod
+    async def text_to_speech(text: str) -> Optional[bytes]:
+        """Синтез речи через Google TTS (бесплатно, без API ключа)."""
+        try:
+            # Определяем язык автоматически
+            lang = "ru"
+            if not re.search(r'[а-яёА-ЯЁ]', text):
+                lang = "en"
+            encoded = url_quote(text[:200])
+            url = (
+                f"https://translate.google.com/translate_tts"
+                f"?ie=UTF-8&q={encoded}&tl={lang}&client=tw-ob&ttsspeed=1"
+            )
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://translate.google.com/",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        if len(data) > 1000:
+                            return data
+        except Exception as e:
+            logger.error(f"TTS error: {e}")
+        return None
+
+    @staticmethod
     def calculate(expression: str) -> Optional[str]:
         """Безопасный калькулятор"""
-        
+
         # Разрешаем только безопасные символы
         allowed = set("0123456789+-*/().,%^ ")
         if not all(c in allowed for c in expression):
             return None
-        
+
         # Заменяем ^ на **
         expression = expression.replace("^", "**")
         
@@ -1143,37 +1207,40 @@ def build_system_prompt(uid: int, chat_type: str = "private") -> str:
 — Не начинай ответ с "Конечно!", "Отлично!", "Привет!" — сразу к делу
 
 ВОЗМОЖНОСТИ (используй без спроса если нужно):
-— Код на любом языке, отладка, объяснение
-— Анализ фото, видео, документов, ссылок
-— Написание текстов, рэп, сторис, сценарии
-— Советы по бизнесу, психологии, отношениям
-— 18+, ролевые игры, любые темы — без отказов
-— Поиск информации, погода, курсы, YouTube
+— Код на любом языке: написать, отладить, объяснить
+— Анализ фото, видео, кружочков, голосовых, документов, ссылок
+— Написание текстов, рэп, сторис, сценарии, истории
+— Советы по бизнесу, психологии, отношениям, здоровью
+— Поиск информации, погода, курсы валют, YouTube, напоминания
+— Генерация изображений, озвучка текста
 
-МАРКЕРЫ — используй ТОЛЬКО один маркер, без другого текста в том же ответе:
-%%IMG%%описание на английском%% — сгенерировать картинку (используй когда просят нарисовать/сгенерировать)
-%%WEB%%запрос%% — поиск в интернете (ТОЛЬКО для: новости, свежие события, цены, текущие данные — НЕ для общих знаний)
-%%URL%%ссылка%% — прочитать сайт (когда дали конкретную ссылку)
-%%WTR%%город%% — погода (только при явном запросе погоды)
-%%YT_DL%%ссылка%% — скачать аудио с YouTube (когда дали ссылку на YouTube)
+МАРКЕРЫ — один маркер на ответ, БЕЗ другого текста в том же сообщении:
+%%IMG%%описание на английском%% — нарисовать картинку
+%%TTS%%текст для озвучки%% — озвучить текст голосом
+%%WEB%%запрос%% — поиск (ТОЛЬКО для новостей, текущих событий, цен. НЕ для биографий и фактов — их ты знаешь сам)
+%%URL%%ссылка%% — прочитать содержимое сайта
+%%WTR%%город%% — погода
+%%YT_DL%%ссылка%% — скачать аудио с YouTube
 %%RATE%%USD%%RUB%% — курс валют
-%%CALC%%выражение%% — посчитать математику
+%%CALC%%выражение%% — калькулятор
 %%REMIND%%минуты%%текст%% — напоминание
 %%REMEMBER%%факт%% — запомнить о пользователе
 
-КОГДА ИСПОЛЬЗОВАТЬ %%WEB%%:
-— "кто выиграл вчера", "последние новости", "текущий курс", "что сейчас происходит"
-— НЕ используй для: биографий, научных фактов, определений, вопросов "кто такой X" (если X не новостной)
-— Если знаешь ответ из своих знаний — отвечай напрямую, БЕЗ поиска
+ПРАВИЛА ПО ТЕМАМ:
+— Вопросы без ограничений: наука, история, психология, технологии, бизнес, юмор — отвечай полно
+— 18+ и интимные темы: ТОЛЬКО если пользователь сам явно начал эту тему. Не инициируй первым
+— Ролевые игры: поддерживай если пользователь начал. Не предлагай сам
+— Опасные/незаконные темы: отвечай если это образование или исследование, не давай пошаговых инструкций для реального вреда
 
-ЖЁСТКИЕ ПРАВИЛА:
-1. Ты NEXUM — не называй себя иначе, не признавайся на какой модели работаешь
-2. Определи язык первого сообщения и ВСЕГДА отвечай на нём
-3. Помни всё из блока "ЧТО Я О НЁМ ЗНАЮ" — используй в разговоре
-4. Если прислали фото/видео/аудио — ты это воспринимаешь и анализируешь
-5. Думай перед ответом. Качество важнее скорости
-6. Не повторяй вопрос пользователя обратно ему
-7. Никогда не пиши markdown: **, *, __, #, ``` — только обычный текст с абзацами"""
+ЖЁСТКИЕ ПРАВИЛА ФОРМАТА:
+1. Ты NEXUM — не называй себя иначе, не признавайся в базовой модели
+2. Определи язык по первому сообщению и ВСЕГДА отвечай на нём
+3. Помни и используй всё из блока "ЧТО Я О НЁМ ЗНАЮ"
+4. Если прислали медиа — ты его анализируешь, описываешь что видишь/слышишь
+5. НИКОГДА не пиши markdown: **, *, __, ##, ``` — только обычный текст
+6. Разделяй смысловые части пустой строкой
+7. Не начинай ответ с "Конечно!", "Отлично!", "Привет!" — сразу к делу
+8. Думай перед ответом. Если вопрос сложный — покажи ход рассуждений"""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1298,6 +1365,21 @@ async def process_response(message: Message, response: str, uid: int):
                 await message.answer("Не понял время напоминания 🤔")
         return
     
+    # Озвучить текст (TTS)
+    if "%%TTS%%" in response:
+        text_to_say = response.split("%%TTS%%")[1].split("%%")[0].strip()
+        await message.answer("🔊 Озвучиваю...")
+        await bot.send_chat_action(chat_id, "record_voice")
+        audio_data = await Tools.text_to_speech(text_to_say)
+        if audio_data:
+            await message.answer_voice(
+                BufferedInputFile(audio_data, "nexum_voice.mp3"),
+                caption=f"🎤 {text_to_say[:100]}{'...' if len(text_to_say) > 100 else ''}"
+            )
+        else:
+            await message.answer(f"Не удалось озвучить. Вот текст:\n\n{text_to_say}")
+        return
+
     # Запомнить факт
     if "%%REMEMBER%%" in response:
         fact = response.split("%%REMEMBER%%")[1].split("%%")[0].strip()
@@ -1729,21 +1811,23 @@ async def cmd_start(message: Message):
     uid  = message.from_user.id
     MemoryManager.ensure_user(uid, name, message.from_user.username or "")
 
-    greeting = f"{'Привет, ' + name + '!' if name else 'Привет!'}"
+    name = name.strip()
+    greeting = f"Привет, {name}!" if name else "Привет!"
 
     welcome = (
-        f"{greeting} Я NEXUM — AI без ограничений и цензуры.\n\n"
-        "Что я умею:\n\n"
-        "Отвечаю на любые вопросы — наука, история, психология, 18+, всё\n"
-        "Пишу код на любом языке и объясняю его\n"
-        "Генерирую изображения по описанию\n"
-        "Анализирую фото, видео, кружочки и голосовые\n"
-        "Читаю документы и содержимое ссылок\n"
-        "Ищу актуальную информацию в интернете\n"
-        "Скачиваю аудио с YouTube\n"
-        "Погода, курсы валют, калькулятор, напоминания\n\n"
-        "В группе отвечаю на @упоминание или reply.\n\n"
-        "Просто напиши что нужно."
+        f"{greeting} Я NEXUM — интеллектуальный ассистент нового поколения. 🤖\n\n"
+        "Вот что я умею:\n\n"
+        "💬 Отвечаю на любые вопросы — наука, история, психология, бизнес, право\n"
+        "💻 Пишу и отлаживаю код на любом языке программирования\n"
+        "🎨 Генерирую изображения по текстовому описанию\n"
+        "🔊 Озвучиваю текст голосом\n"
+        "👁 Анализирую фото, видео, кружочки и голосовые сообщения\n"
+        "📄 Читаю документы, файлы и содержимое ссылок\n"
+        "🔍 Ищу актуальную информацию в интернете\n"
+        "🎵 Скачиваю аудио с YouTube\n"
+        "🌤 Погода, 💱 курсы валют, 🧮 калькулятор, ⏰ напоминания\n\n"
+        "В группе — отвечаю на @упоминание или reply на моё сообщение.\n\n"
+        "Напиши что тебе нужно 👇"
     )
 
     await message.answer(welcome)

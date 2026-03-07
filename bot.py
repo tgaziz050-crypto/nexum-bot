@@ -1779,21 +1779,33 @@ async def _process_intent(message, uid: int, text: str):
     }
 
     handler = handlers.get(action)
-    if handler:
-        await handler(message, params, uid)
-    else:
-        # Default: smart chat
-        chat_id = getattr(getattr(message, 'chat', None), 'id', uid)
-        history = Db.history(uid, chat_id, 10)
-        sys_p = _sys_prompt(uid, chat_id, chat_type)
-        msgs = [{"role": "system", "content": sys_p}]
-        msgs += [{"role": row["role"], "content": row["content"]} for row in history]
-        msgs.append({"role": "user", "content": text})
-        reply = await _ask(msgs)
-        Db.add(uid, chat_id, "user", text)
-        Db.add(uid, chat_id, "assistant", reply)
-        await Db.maybe_compress(uid, chat_id)
-        await _send_long(message, reply)
+    try:
+        if handler:
+            import inspect
+            sig = inspect.signature(handler)
+            if len(sig.parameters) >= 3:
+                await handler(message, params, uid)
+            else:
+                await handler(message, params)
+        else:
+            # Default: smart chat
+            chat_id = getattr(getattr(message, 'chat', None), 'id', uid)
+            history = Db.history(uid, chat_id, 10)
+            sys_p = _sys_prompt(uid, chat_id, chat_type)
+            msgs = [{"role": "system", "content": sys_p}]
+            msgs += [{"role": row["role"], "content": row["content"]} for row in history]
+            msgs.append({"role": "user", "content": text})
+            reply = await _ask(msgs)
+            Db.add(uid, chat_id, "user", text)
+            Db.add(uid, chat_id, "assistant", reply)
+            await Db.maybe_compress(uid, chat_id)
+            await _send_long(message, reply)
+    except Exception as e:
+        log.error(f"_process_intent error: {e}", exc_info=True)
+        try:
+            await message.answer(str(e))
+        except Exception:
+            pass
 
 
 @dp.message(F.text)

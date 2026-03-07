@@ -4,7 +4,7 @@
 ║  Intent-driven: no menus, AI understands and acts directly  ║
 ╚══════════════════════════════════════════════════════════════╝
 """
-import asyncio, logging, os, tempfile, base64, random, aiohttp, sys, json, re, time
+import asyncio, logging, os, tempfile, base64, random, aiohttp, sys, json, re, time, io
 import subprocess, shutil, sqlite3
 from urllib.parse import quote as uq
 from datetime import datetime, timedelta
@@ -1547,7 +1547,7 @@ async def cb_regen_video(cb: CallbackQuery):
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     uid = message.from_user.id
-    db.upsert_user(uid, message.from_user.username, message.from_user.first_name)
+    Db.ensure(uid, name=message.from_user.first_name or "", username=message.from_user.username or "")
     await message.answer(
         "👋 Привет! Я **NEXUM** — твой AI-ассистент.\n\n"
         "Я умею:\n"
@@ -1592,14 +1592,14 @@ async def cmd_notion_page(message: Message):
     uid = message.from_user.id
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        current = db.get_notion_page(uid)
+        current = Db.get_notion_page(uid)
         if current:
             await message.answer(f"Текущая Notion страница: `{current}`\n\nЧтобы сменить: `/notion_page PAGE_ID`")
         else:
             await message.answer("Notion страница не задана.\n\nИспользуй: `/notion_page PAGE_ID`")
         return
     page_id = args[1].strip()
-    db.set_notion_page(uid, page_id)
+    Db.set_notion_page(uid, page_id)
     await message.answer(f"✅ Notion страница сохранена: `{page_id}`")
 
 
@@ -1643,7 +1643,7 @@ async def on_added(update: ChatMemberUpdated):
 @dp.message(F.voice | F.audio)
 async def on_voice(message: Message):
     uid = message.from_user.id
-    db.upsert_user(uid, message.from_user.username, message.from_user.first_name)
+    Db.ensure(uid, name=message.from_user.first_name or "", username=message.from_user.username or "")
     m = await message.answer("🎤 Распознаю речь...")
     try:
         file_obj = message.voice or message.audio
@@ -1682,7 +1682,7 @@ async def on_voice(message: Message):
 @dp.message(F.photo)
 async def on_photo(message: Message):
     uid = message.from_user.id
-    db.upsert_user(uid, message.from_user.username, message.from_user.first_name)
+    Db.ensure(uid, name=message.from_user.first_name or "", username=message.from_user.username or "")
     caption = message.caption or ""
     m = await message.answer("🖼️ Анализирую изображение...")
     try:
@@ -1692,13 +1692,13 @@ async def on_photo(message: Message):
         await bot.download_file(f.file_path, buf)
         img_bytes = buf.getvalue()
         prompt = caption if caption else "Опиши что на изображении подробно."
-        history = db.get_conv(uid, limit=4)
-        reply = await _gemini_vision(prompt, img_bytes, history)
+        b64 = base64.b64encode(img_bytes).decode()
+        reply = await _gemini_vision(b64, prompt)
         try: await m.delete()
         except: pass
         if reply:
-            db.save_conv(uid, "user", f"[фото] {caption}")
-            db.save_conv(uid, "assistant", reply)
+            Db.add(uid, message.chat.id, "user", f"[фото] {caption}")
+            Db.add(uid, message.chat.id, "assistant", reply)
             await _send_long(message, reply)
         else:
             await message.answer("Не смог проанализировать изображение.")
@@ -1716,7 +1716,7 @@ async def on_video(message: Message):
 @dp.message(F.document)
 async def on_document(message: Message):
     uid = message.from_user.id
-    db.upsert_user(uid, message.from_user.username, message.from_user.first_name)
+    Db.ensure(uid, name=message.from_user.first_name or "", username=message.from_user.username or "")
     caption = message.caption or ""
     doc = message.document
     # Try to read text documents
@@ -1729,7 +1729,7 @@ async def on_document(message: Message):
             content = buf.getvalue().decode("utf-8", errors="replace")[:4000]
             prompt = caption if caption else "Проанализируй этот документ и дай краткое резюме."
             full_prompt = f"{prompt}\n\nСодержание:\n{content}"
-            reply = await _ask(full_prompt, uid)
+            reply = await _ask([{"role": "user", "content": full_prompt}])
             try: await m.delete()
             except: pass
             await _send_long(message, reply)
@@ -1783,18 +1783,23 @@ async def _process_intent(message, uid: int, text: str):
         await handler(message, params, uid)
     else:
         # Default: smart chat
-        history = db.get_conv(uid, limit=10)
-        sys = _sys_prompt(uid)
-        reply = await _ask(text, uid, system=sys, history=history)
-        db.save_conv(uid, "user", text)
-        db.save_conv(uid, "assistant", reply)
+        chat_id = getattr(getattr(message, 'chat', None), 'id', uid)
+        history = Db.history(uid, chat_id, 10)
+        sys_p = _sys_prompt(uid, chat_id, chat_type)
+        msgs = [{"role": "system", "content": sys_p}]
+        msgs += [{"role": row["role"], "content": row["content"]} for row in history]
+        msgs.append({"role": "user", "content": text})
+        reply = await _ask(msgs)
+        Db.add(uid, chat_id, "user", text)
+        Db.add(uid, chat_id, "assistant", reply)
+        await Db.maybe_compress(uid, chat_id)
         await _send_long(message, reply)
 
 
 @dp.message(F.text)
 async def on_text(message: Message):
     uid = message.from_user.id
-    db.upsert_user(uid, message.from_user.username, message.from_user.first_name)
+    Db.ensure(uid, name=message.from_user.first_name or "", username=message.from_user.username or "")
     text = message.text.strip()
 
     # Ignore bot commands (handled separately)
@@ -1889,7 +1894,7 @@ async def main():
     import nexum_config as cfg
     cfg.check_keys()
 
-    db.init()
+    _init_db()
     await restore_schedules()
     scheduler.start()
     await register_commands()

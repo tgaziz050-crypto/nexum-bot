@@ -57,9 +57,9 @@ def check_keys():
     }
     active = {k: v for k, v in providers.items() if v > 0}
     if not active:
-        log.critical("No AI provider keys found! Add at least G1 (Gemini) or GR1 (Groq) to .env")
-        sys.exit(1)
-    log.info(f"AI providers: {', '.join(f'{k}({v})' for k,v in active.items())}")
+        log.warning("No AI provider keys found. AI features will be disabled. Add G1 (Gemini) or GR1 (Groq) to enable.")
+    else:
+        log.info(f"AI providers: {', '.join(f'{k}({v})' for k,v in active.items())}")
     if NOTION_TOKEN:
         log.info("Notion: connected")
     if HF_TOKEN:

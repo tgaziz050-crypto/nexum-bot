@@ -30,10 +30,44 @@ logging.basicConfig(
 log = logging.getLogger("NEXUM")
 
 # ── Keys ───────────────────────────────────────────────────
-BOT_TOKEN   = os.getenv("BOT_TOKEN", "")
-CLAUDE_KEYS = [x for x in [os.getenv(k) for k in ["CL1","CL2","CL3","CLAUDE_KEY"]] if x]
-GEMINI_KEYS = [x for x in [os.getenv(k) for k in ["G1","G2","G3","G4","G5","G6","G7","G8"]] if x]
-GROQ_KEYS   = [x for x in [os.getenv(k) for k in ["GR1","GR2","GR3","GR4","GR5"]] if x]
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8758082038:AAH4UvCCmYPBnp-Hb9FrIX2OgqhnXj1ur5A")
+
+GEMINI_KEYS = [k for k in [
+    os.getenv("G1","AIzaSyDf6nwIOu8zP_px0fol7e9tnMUVExJlVmc"),
+    os.getenv("G2","AIzaSyAXyKxHHs_x-10x7AzQvkzvcf3-dUlyFRw"),
+    os.getenv("G3","AIzaSyCQYq2EOS7ipG6CUyyLSoFc434lXWEAEzg"),
+    os.getenv("G4","AIzaSyDrhpSExtB60gqteY94zVqVt0a8IaAU7yQ"),
+    os.getenv("G5","AIzaSyClyTrxkcPcjP9JugkbwL7AqRS_kNZuHJ4"),
+    os.getenv("G6","AIzaSyBovsh5hKsZM1V3E551tvTl4tVyD7yvbSo"),
+] if k]
+
+GROQ_KEYS = [k for k in [
+    os.getenv("GR1","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"),
+    os.getenv("GR2","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"),
+    os.getenv("GR3","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"),
+    os.getenv("GR4","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"),
+    os.getenv("GR5","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"),
+    os.getenv("GR6","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"),
+] if k]
+
+DS_KEYS = [k for k in [
+    os.getenv("DS1","sk-09d35dbeb4a5430686f60bbd7411621e"),
+    os.getenv("DS2","sk-ad28ca8936ca4fa6a55847b532b9d956"),
+    os.getenv("DS3","sk-bae4ca5752974a5eb3edab30d0341439"),
+    os.getenv("DS4","sk-1262a6b483e54810a8d02adc6f06fe48"),
+    os.getenv("DS5","sk-22dad775c9f8465398a2e924ec4ae916"),
+    os.getenv("DS6","sk-bf18eb9208f14617b883a0aa4d05c5b0"),
+] if k]
+
+CLAUDE_KEYS = [k for k in [
+    os.getenv("CL1","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"),
+] if k]
+
+GROK_KEYS = [k for k in [
+    os.getenv("GK1","sk-MXZl1hDZGmEN4slJhehF3OFWqarKHYlL4Y1MPo8rCtjlnrNf"),
+    os.getenv("GK2","sk-KZ09Pva3G0Lq8hoYIIl6LP0ld5MR7wV05YQgK3RThxvGStwG"),
+    os.getenv("GK3","sk-F9gQGwwdPQ3bn69ua29mCAv4B3LmUr0Bdsy4sTvwgxOwoCBY"),
+] if k]
 
 # ── Key rotation ────────────────────────────────────────────
 _ki: dict = {}

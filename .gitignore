@@ -1,48 +1,11 @@
-# Секреты — НИКОГДА не коммитить!
+node_modules/
+dist/
 .env
-*.env
-!config.example.env
-
-# Бэкапы — не нужны в репо
-bot_backup.py
-*_backup.py
-
-# База данных
 *.db
-*.sqlite
-*.sqlite3
-
-# Python
+*.db-wal
+*.db-shm
+.DS_Store
+*.log
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-build/
-dist/
-*.egg-info/
-
-# Виртуальные окружения
-.venv/
-venv/
-env/
-
-# Логи
-*.log
-logs/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Временные файлы бота
-nexum_dl_*/
-downloads/
-temp/
-/tmp/nexum_*
+.nexum_audit.log

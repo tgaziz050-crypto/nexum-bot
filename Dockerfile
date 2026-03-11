@@ -1,29 +1,18 @@
-FROM python:3.11-slim
+FROM node:22-alpine
 
-# Системные зависимости
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# yt-dlp через pip
-RUN pip install --no-cache-dir yt-dlp
+RUN apk add --no-cache python3 py3-pip make g++ \
+ && pip3 install edge-tts --break-system-packages
 
 WORKDIR /app
 
-# Зависимости (включая shazamio для распознавания музыки)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY package*.json ./
+RUN npm install
 
-# Код
-COPY bot.py .
-COPY nexum_agent.py .
+COPY . .
+RUN npm run build
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+RUN npm prune --omit=dev
 
-EXPOSE 8080
+ENV NODE_ENV=production
 
-CMD ["python", "-u", "bot.py"]
+CMD ["node", "dist/index.js"]

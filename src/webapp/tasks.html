@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>NEXUM Tasks</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#000;--bg-el:#1c1c1e;--bg-sec:#2c2c2e;--lbl:#fff;--lbl2:rgba(235,235,245,.6);--lbl3:rgba(235,235,245,.3);--sep:rgba(84,84,88,.65);--fill:rgba(120,120,128,.2);--blue:#0a84ff;--green:#30d158;--red:#ff453a;--orange:#ff9f0a;--r-lg:20px;--r-md:14px;--r-sm:10px;}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{background:var(--bg);color:var(--lbl);font-family:-apple-system,'Geist',sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased;}
+::-webkit-scrollbar{display:none;}*{scrollbar-width:none;}
+.app{max-width:430px;margin:0 auto;padding-bottom:100px;}
+
+.hdr{padding:calc(env(safe-area-inset-top,0px)+16px) 20px 0;display:flex;align-items:center;justify-content:space-between;}
+.hdr-logo{display:flex;align-items:center;gap:10px;}
+.logo-n{width:34px;height:34px;background:var(--blue);border-radius:9px;display:flex;align-items:center;justify-content:center;}
+.logo-n svg{width:18px;height:18px;color:#fff;}
+.hdr-title{font-size:17px;font-weight:600;letter-spacing:-.4px;}
+.ibtn{width:34px;height:34px;background:var(--fill);border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--lbl);}
+.ibtn:active{opacity:.6;}
+
+/* STATS */
+.stats{display:flex;gap:10px;margin:20px 16px 0;overflow-x:auto;padding-bottom:2px;}
+.stat{flex-shrink:0;background:var(--bg-el);border-radius:var(--r-md);padding:14px 18px;text-align:center;}
+.stat-n{font-size:28px;font-weight:700;letter-spacing:-1px;font-variant-numeric:tabular-nums;}
+.stat-n.bl{color:var(--blue);}.stat-n.gr{color:var(--green);}.stat-n.or{color:var(--orange);}
+.stat-l{font-size:12px;color:var(--lbl2);margin-top:3px;font-weight:500;}
+
+/* FILTER */
+.filters{display:flex;gap:8px;margin:16px 16px 0;overflow-x:auto;padding-bottom:4px;}
+.filter-btn{flex-shrink:0;padding:7px 16px;border-radius:20px;border:none;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;background:var(--fill);color:var(--lbl2);transition:all .14s;}
+.filter-btn.on{background:var(--blue);color:#fff;}
+
+/* TASKS */
+.sec{margin:20px 16px 0;}
+.proj-hdr{font-size:15px;font-weight:700;color:var(--lbl2);margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.task-list{display:flex;flex-direction:column;}
+.task{background:var(--bg-el);display:flex;align-items:flex-start;gap:12px;padding:14px 14px;cursor:pointer;transition:opacity .1s;position:relative;overflow:hidden;}
+.task:first-child{border-radius:var(--r-md) var(--r-md) 0 0;}
+.task:last-child{border-radius:0 0 var(--r-md) var(--r-md);}
+.task:only-child{border-radius:var(--r-md);}
+.task+.task{border-top:1px solid var(--sep);}
+.task:active{opacity:.75;}
+.task.done{opacity:.5;}
+.task-check{width:22px;height:22px;border-radius:50%;border:2px solid var(--sep);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;transition:all .2s;}
+.task-check.on{background:var(--green);border-color:var(--green);}
+.task-info{flex:1;min-width:0;}
+.task-nm{font-size:15px;font-weight:500;line-height:1.3;}
+.task.done .task-nm{text-decoration:line-through;color:var(--lbl2);}
+.task-meta{font-size:12px;color:var(--lbl3);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap;}
+.prio-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:7px;}
+.prio-1{background:var(--lbl3);}
+.prio-2{background:var(--blue);}
+.prio-3{background:var(--orange);}
+.prio-4{background:var(--red);}
+
+.empty{text-align:center;padding:60px 20px;color:var(--lbl2);}
+.empty-ico{font-size:48px;margin-bottom:14px;}
+.empty-ttl{font-size:20px;font-weight:600;color:var(--lbl);margin-bottom:8px;}
+.ld{display:flex;align-items:center;justify-content:center;padding:40px;}
+.spin{width:32px;height:32px;border:3px solid var(--fill);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* SHEET */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;opacity:0;pointer-events:none;transition:opacity .3s;}
+.ov.on{opacity:1;pointer-events:all;}
+.sheet{position:fixed;bottom:0;left:50%;transform:translateX(-50%) translateY(100%);width:100%;max-width:430px;background:var(--bg-el);border-radius:20px 20px 0 0;padding:8px 0 calc(env(safe-area-inset-bottom,0px)+24px);z-index:101;transition:transform .38s cubic-bezier(.32,.72,0,1);}
+.sheet.on{transform:translateX(-50%) translateY(0);}
+.shdl{width:36px;height:5px;background:var(--fill);border-radius:3px;margin:0 auto 20px;}
+.sh-ttl{font-size:20px;font-weight:700;letter-spacing:-.4px;padding:0 20px 16px;}
+.sh-body{padding:0 16px 8px;}
+.fg{margin-bottom:12px;}
+.fl{font-size:12px;font-weight:600;color:var(--lbl2);letter-spacing:.4px;text-transform:uppercase;margin-bottom:6px;}
+.fi{width:100%;background:var(--bg-sec);border:none;border-radius:var(--r-sm);padding:14px 16px;font-size:16px;font-family:inherit;color:var(--lbl);outline:none;}
+.fi::placeholder{color:var(--lbl3);}
+.fi:focus{box-shadow:0 0 0 2px var(--blue);}
+.prio-pills{display:flex;gap:8px;}
+.ppill{flex:1;padding:10px 6px;border-radius:var(--r-sm);border:2px solid var(--sep);background:none;cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;color:var(--lbl2);text-align:center;transition:all .14s;}
+.ppill.on-1{border-color:var(--lbl3);color:var(--lbl);}
+.ppill.on-2{border-color:var(--blue);color:var(--blue);background:rgba(10,132,255,.1);}
+.ppill.on-3{border-color:var(--orange);color:var(--orange);background:rgba(255,159,10,.1);}
+.ppill.on-4{border-color:var(--red);color:var(--red);background:rgba(255,69,58,.1);}
+.btn-save{width:100%;padding:16px;background:var(--blue);color:#fff;border:none;border-radius:var(--r-md);font-size:17px;font-weight:600;font-family:inherit;cursor:pointer;margin-top:8px;}
+.btn-save:active{opacity:.8;}
+
+.toast{position:fixed;top:80px;left:50%;transform:translateX(-50%) translateY(-16px);background:var(--bg-sec);color:var(--lbl);padding:11px 20px;border-radius:20px;font-size:15px;font-weight:500;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:300;opacity:0;transition:all .28s;white-space:nowrap;}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+<div class="app">
+  <div class="hdr">
+    <div class="hdr-logo">
+      <div class="logo-n">
+        <svg viewBox="0 0 20 20" fill="none"><path d="M4 16V4L10 14L16 4V16" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <span class="hdr-title">Задачи</span>
+    </div>
+    <button class="ibtn" onclick="openSheet()">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+    </button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-n bl" id="st-total">0</div><div class="stat-l">Всего</div></div>
+    <div class="stat"><div class="stat-n gr" id="st-done">0</div><div class="stat-l">Выполнено</div></div>
+    <div class="stat"><div class="stat-n or" id="st-urgent">0</div><div class="stat-l">Срочных</div></div>
+  </div>
+
+  <div class="filters">
+    <button class="filter-btn on" onclick="setFilter('all',this)">Все</button>
+    <button class="filter-btn" onclick="setFilter('todo',this)">Активные</button>
+    <button class="filter-btn" onclick="setFilter('done',this)">Выполненные</button>
+  </div>
+
+  <div class="sec">
+    <div id="tasks-list"><div class="ld"><div class="spin"></div></div></div>
+  </div>
+</div>
+
+<!-- SHEET -->
+<div class="ov" id="ov" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet">
+  <div class="shdl"></div>
+  <div class="sh-ttl">Новая задача</div>
+  <div class="sh-body">
+    <div class="fg">
+      <div class="fl">Задача</div>
+      <input class="fi" id="t-title" type="text" placeholder="Что нужно сделать?">
+    </div>
+    <div class="fg">
+      <div class="fl">Описание</div>
+      <input class="fi" id="t-desc" type="text" placeholder="Необязательно...">
+    </div>
+    <div class="fg">
+      <div class="fl">Приоритет</div>
+      <div class="prio-pills">
+        <button class="ppill" id="pp-1" onclick="setPrio(1,this)">Низкий</button>
+        <button class="ppill on-2" id="pp-2" onclick="setPrio(2,this)">Средний</button>
+        <button class="ppill" id="pp-3" onclick="setPrio(3,this)">Высокий</button>
+        <button class="ppill" id="pp-4" onclick="setPrio(4,this)">⚡</button>
+      </div>
+    </div>
+    <div class="fg">
+      <div class="fl">Проект</div>
+      <input class="fi" id="t-proj" type="text" placeholder="Inbox">
+    </div>
+    <button class="btn-save" onclick="saveTask()">Добавить</button>
+  </div>
+</div>
+
+<script>
+const tg=window.Telegram?.WebApp;
+if(tg){tg.ready();tg.expand();tg.setHeaderColor('#000000');tg.setBackgroundColor('#000000');}
+const p=new URLSearchParams(location.search);
+const UID=p.get('uid')||'0', TOKEN=p.get('token')||'';
+let tasks=[], curFilter='all', curPrio=2;
+
+function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e.classList.add('on');setTimeout(()=>e.classList.remove('on'),2400);}
+
+async function load(){
+  try{const r=await fetch(`/api/tasks?uid=${UID}&token=${TOKEN}`);if(r.ok)tasks=await r.json();}catch{}
+  render();
+}
+
+function render(){
+  const el=document.getElementById('tasks-list');
+  let list=tasks;
+  if(curFilter==='todo')list=tasks.filter(t=>t.status!=='done');
+  else if(curFilter==='done')list=tasks.filter(t=>t.status==='done');
+  document.getElementById('st-total').textContent=tasks.length;
+  document.getElementById('st-done').textContent=tasks.filter(t=>t.status==='done').length;
+  document.getElementById('st-urgent').textContent=tasks.filter(t=>t.priority>=3&&t.status!=='done').length;
+  if(!list.length){el.innerHTML=`<div class="empty"><div class="empty-ico">✅</div><div class="empty-ttl">${curFilter==='done'?'Нет выполненных задач':'Все сделано!'}</div></div>`;return;}
+  // group by project
+  const byProj={};
+  for(const t of list){if(!byProj[t.project])byProj[t.project]=[];byProj[t.project].push(t);}
+  el.innerHTML=Object.entries(byProj).map(([proj,items])=>`
+    <div style="margin-bottom:16px">
+      <div class="proj-hdr">📁 ${proj}</div>
+      <div class="task-list">${items.map((t,i)=>`
+        <div class="task${t.status==='done'?' done':''}" onclick="toggleTask(${t.id})">
+          <div class="prio-dot prio-${t.priority}"></div>
+          <div class="task-check${t.status==='done'?' on':''}">${t.status==='done'?'<svg width="12" height="12" viewBox="0 0 20 20" fill="white"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>':''}</div>
+          <div class="task-info">
+            <div class="task-nm">${t.title}</div>
+            <div class="task-meta">
+              ${t.description?`<span>${t.description.slice(0,50)}</span>`:''}
+              ${t.due_at?`<span>📅 ${new Date(t.due_at).toLocaleDateString('ru',{day:'numeric',month:'short'})}</span>`:''}
+              <span>${['','Низкий','Средний','Высокий','⚡ Срочно'][t.priority]}</span>
+            </div>
+          </div>
+        </div>
+      `).join('')}</div>
+    </div>
+  `).join('');
+}
+
+function setFilter(f,btn){curFilter=f;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');render();}
+
+async function toggleTask(id){
+  const t=tasks.find(x=>x.id===id);if(!t)return;
+  const newStatus=t.status==='done'?'todo':'done';
+  try{await fetch('/api/tasks/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:UID,token:TOKEN,id,status:newStatus})});
+  toast(newStatus==='done'?'✅ Готово!':'↩ Возвращено');await load();}catch{toast('Ошибка');}
+}
+
+function openSheet(){
+  document.getElementById('t-title').value='';
+  document.getElementById('t-desc').value='';
+  document.getElementById('t-proj').value='Inbox';
+  curPrio=2;updPills();
+  document.getElementById('ov').classList.add('on');
+  document.getElementById('sheet').classList.add('on');
+  setTimeout(()=>document.getElementById('t-title').focus(),380);
+}
+function closeSheet(){document.getElementById('ov').classList.remove('on');document.getElementById('sheet').classList.remove('on');}
+function setPrio(p,btn){curPrio=p;updPills();}
+function updPills(){[1,2,3,4].forEach(i=>{const e=document.getElementById('pp-'+i);e.className='ppill'+(i===curPrio?' on-'+i:'');});}
+
+async function saveTask(){
+  const title=document.getElementById('t-title').value.trim();
+  const desc=document.getElementById('t-desc').value.trim();
+  const proj=document.getElementById('t-proj').value.trim()||'Inbox';
+  if(!title){toast('Напиши задачу');return;}
+  try{await fetch('/api/tasks/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:UID,token:TOKEN,title,description:desc,project:proj,priority:curPrio})});
+  closeSheet();toast('✅ Добавлено!');await load();}catch{toast('Ошибка сети');}
+}
+
+load();
+</script>
+</body>
+</html>

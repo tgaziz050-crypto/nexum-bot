@@ -142,20 +142,20 @@ export function buildSystemPrompt(
 
   const mems    = isPrivate ? Db.getMemories(uid) : [];
   const memStr  = mems.length
-    ? mems.slice(0, 20).map(m => `[${m.category}] ${m.value}`).join("\n")
+    ? mems.slice(0, 40).map(m => `[${m.category}:${m.importance}] ${m.value}`).join("\n")
     : "";
 
   const lm      = isPrivate ? Db.getLongMem(uid) : {};
   const lmStr   = Object.keys(lm).length
-    ? Object.entries(lm).slice(0, 15).map(([k, v]) => `• ${k}: ${v}`).join("\n")
+    ? Object.entries(lm).slice(0, 30).map(([k, v]) => `• ${k}: ${v}`).join("\n")
     : "";
 
-  const daily   = isPrivate ? Db.getDailyLogs(uid, 2).slice(0, 10).join("\n") : "";
+  const daily   = isPrivate ? Db.getDailyLogs(uid, 3).slice(0, 20).join("\n") : "";
   const profile = isPrivate ? Db.getProfile(uid) : "";
 
   const bank    = isPrivate ? Db.getBankAll(uid) : [];
   const bankStr = bank.length
-    ? bank.map(b => `[${b.category}] ${b.key}: ${b.content.slice(0, 100)}`).join("\n")
+    ? bank.map(b => `[${b.category}] ${b.key}: ${b.content.slice(0, 150)}`).join("\n")
     : "";
 
   const h   = new Date().getHours();

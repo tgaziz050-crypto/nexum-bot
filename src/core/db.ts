@@ -154,6 +154,86 @@ CREATE TABLE IF NOT EXISTS fin_budgets (
   ts       TEXT    DEFAULT (datetime('now')),
   UNIQUE(uid, category, period)
 );
+
+-- ── ALARM SYSTEM ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS alarms (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid          INTEGER NOT NULL,
+  chat_id      INTEGER NOT NULL,
+  text         TEXT    NOT NULL,
+  fire_at      TEXT    NOT NULL,
+  interval_min INTEGER DEFAULT 5,
+  max_repeats  INTEGER DEFAULT 6,
+  repeat_count INTEGER DEFAULT 0,
+  status       TEXT    DEFAULT 'pending',
+  created_at   TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alarms ON alarms(status, fire_at);
+
+-- ── TASKS ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid         INTEGER NOT NULL,
+  title       TEXT    NOT NULL,
+  description TEXT    DEFAULT '',
+  project     TEXT    DEFAULT 'Inbox',
+  priority    INTEGER DEFAULT 2,
+  status      TEXT    DEFAULT 'todo',
+  due_at      TEXT,
+  ts          TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tasks ON tasks(uid, status);
+
+-- ── NOTES ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notes (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid     INTEGER NOT NULL,
+  title   TEXT    DEFAULT '',
+  content TEXT    NOT NULL,
+  tags    TEXT    DEFAULT '',
+  pinned  INTEGER DEFAULT 0,
+  ts      TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notes ON notes(uid, ts DESC);
+
+-- ── HABITS ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS habits (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid            INTEGER NOT NULL,
+  name           TEXT    NOT NULL,
+  emoji          TEXT    DEFAULT '✅',
+  frequency      TEXT    DEFAULT 'daily',
+  reminder_time  TEXT    DEFAULT '',
+  streak         INTEGER DEFAULT 0,
+  ts             TEXT    DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS habit_logs (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  habit_id INTEGER NOT NULL,
+  uid      INTEGER NOT NULL,
+  date     TEXT    NOT NULL,
+  done     INTEGER DEFAULT 1,
+  UNIQUE(habit_id, date)
+);
+
+-- ── IMPROVEMENT LOG ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS improvement_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal   TEXT    NOT NULL,
+  status     TEXT    DEFAULT 'pending',
+  admin_notes TEXT   DEFAULT '',
+  metrics    TEXT    DEFAULT '',
+  ts         TEXT    DEFAULT (datetime('now'))
+);
+
+-- ── ERROR LOG ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS error_log (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  module  TEXT DEFAULT '',
+  message TEXT NOT NULL,
+  stack   TEXT DEFAULT '',
+  ts      TEXT DEFAULT (datetime('now'))
+);
 `);
 
 export interface UserRow    { uid: number; name: string; username: string; lang: string; total_msgs: number; is_banned: number; voice_mode: number }
@@ -181,6 +261,8 @@ const s = {
 
   addMsg:          db.prepare(`INSERT INTO conversations(uid,chat_id,role,content) VALUES(?,?,?,?)`),
   getHistory:      db.prepare(`SELECT role,content FROM conversations WHERE uid=? AND chat_id=? ORDER BY ts DESC LIMIT ?`),
+  getHistoryFull:  db.prepare(`SELECT id,role,content FROM conversations WHERE uid=? AND chat_id=? ORDER BY ts ASC LIMIT ?`),
+  deleteOldMsgs:   db.prepare(`DELETE FROM conversations WHERE uid=? AND chat_id=? AND id IN (SELECT id FROM conversations WHERE uid=? AND chat_id=? ORDER BY ts ASC LIMIT ?)`),
   clearHistory:    db.prepare(`DELETE FROM conversations WHERE uid=? AND chat_id=?`),
   countHistory:    db.prepare(`SELECT COUNT(*) as n FROM conversations WHERE uid=? AND chat_id=?`),
 
@@ -238,6 +320,50 @@ const s = {
 
   setBudget:       db.prepare(`INSERT OR REPLACE INTO fin_budgets(uid,category,amount,period) VALUES(?,?,?,?)`),
   getBudgets:      db.prepare(`SELECT * FROM fin_budgets WHERE uid=?`),
+
+  // Alarms
+  addAlarm:        db.prepare(`INSERT INTO alarms(uid,chat_id,text,fire_at,interval_min,max_repeats) VALUES(?,?,?,?,?,?)`),
+  getPendingAlarms:db.prepare(`SELECT * FROM alarms WHERE status='pending' AND fire_at<=datetime('now')`),
+  updateAlarm:     db.prepare(`UPDATE alarms SET repeat_count=repeat_count+1, fire_at=?, status=? WHERE id=?`),
+  confirmAlarm:    db.prepare(`UPDATE alarms SET status='confirmed' WHERE id=?`),
+  snoozeAlarm:     db.prepare(`UPDATE alarms SET fire_at=datetime(fire_at,'+5 minutes'), repeat_count=repeat_count+1 WHERE id=?`),
+  getUserAlarms:   db.prepare(`SELECT * FROM alarms WHERE uid=? AND status='pending' ORDER BY fire_at`),
+  cancelAlarm:     db.prepare(`UPDATE alarms SET status='cancelled' WHERE id=? AND uid=?`),
+
+  // Tasks
+  addTask:         db.prepare(`INSERT INTO tasks(uid,title,description,project,priority,due_at) VALUES(?,?,?,?,?,?)`),
+  getTasks:        db.prepare(`SELECT * FROM tasks WHERE uid=? AND status!=? ORDER BY priority DESC, ts DESC`),
+  getTask:         db.prepare(`SELECT * FROM tasks WHERE id=? AND uid=?`),
+  updateTaskStatus:db.prepare(`UPDATE tasks SET status=? WHERE id=? AND uid=?`),
+  updateTask:      db.prepare(`UPDATE tasks SET title=?,description=?,project=?,priority=?,due_at=? WHERE id=? AND uid=?`),
+  deleteTask:      db.prepare(`DELETE FROM tasks WHERE id=? AND uid=?`),
+
+  // Notes
+  addNote:         db.prepare(`INSERT INTO notes(uid,title,content,tags) VALUES(?,?,?,?)`),
+  getNotes:        db.prepare(`SELECT * FROM notes WHERE uid=? ORDER BY pinned DESC, ts DESC LIMIT ?`),
+  getNote:         db.prepare(`SELECT * FROM notes WHERE id=? AND uid=?`),
+  searchNotes:     db.prepare(`SELECT * FROM notes WHERE uid=? AND (content LIKE ? OR title LIKE ? OR tags LIKE ?) LIMIT 10`),
+  updateNote:      db.prepare(`UPDATE notes SET title=?,content=?,tags=? WHERE id=? AND uid=?`),
+  pinNote:         db.prepare(`UPDATE notes SET pinned=? WHERE id=? AND uid=?`),
+  deleteNote:      db.prepare(`DELETE FROM notes WHERE id=? AND uid=?`),
+
+  // Habits
+  addHabit:        db.prepare(`INSERT INTO habits(uid,name,emoji,frequency,reminder_time) VALUES(?,?,?,?,?)`),
+  getHabits:       db.prepare(`SELECT * FROM habits WHERE uid=? ORDER BY ts`),
+  logHabit:        db.prepare(`INSERT OR REPLACE INTO habit_logs(habit_id,uid,date,done) VALUES(?,?,?,1)`),
+  getHabitLog:     db.prepare(`SELECT * FROM habit_logs WHERE habit_id=? AND date=?`),
+  getHabitStreak:  db.prepare(`SELECT COUNT(*) as n FROM habit_logs WHERE habit_id=? AND done=1 AND date>=date('now','-30 days')`),
+  updateHabitStreak:db.prepare(`UPDATE habits SET streak=? WHERE id=?`),
+  deleteHabit:     db.prepare(`DELETE FROM habits WHERE id=? AND uid=?`),
+
+  // Improvement log
+  addImprovement:  db.prepare(`INSERT INTO improvement_log(proposal,metrics) VALUES(?,?)`),
+  updateImprovement:db.prepare(`UPDATE improvement_log SET status=?,admin_notes=? WHERE id=?`),
+  getPendingImprovements:db.prepare(`SELECT * FROM improvement_log WHERE status='pending' ORDER BY ts DESC LIMIT 5`),
+
+  // Error log
+  addError:        db.prepare(`INSERT INTO error_log(module,message,stack) VALUES(?,?,?)`),
+  getErrors:       db.prepare(`SELECT * FROM error_log ORDER BY ts DESC LIMIT ?`),
 };
 
 export const Db = {
@@ -252,8 +378,14 @@ export const Db = {
   addMsg(uid: number, chatId: number, role: "user"|"assistant"|"system", content: string) {
     s.addMsg.run(uid, chatId, role, content.slice(0, 8000));
   },
-  getHistory(uid: number, chatId: number, limit = 16): ConvRow[] {
+  getHistory(uid: number, chatId: number, limit = 50): ConvRow[] {
     return (s.getHistory.all(uid, chatId, limit) as ConvRow[]).reverse();
+  },
+  getHistoryFull(uid: number, chatId: number, limit = 60): any[] {
+    return s.getHistoryFull.all(uid, chatId, limit) as any[];
+  },
+  deleteOldMessages(uid: number, chatId: number, count: number) {
+    s.deleteOldMsgs.run(uid, chatId, uid, chatId, count);
   },
   clearHistory(uid: number, chatId: number) { s.clearHistory.run(uid, chatId); },
   historyCount(uid: number, chatId: number): number { return (s.countHistory.get(uid, chatId) as any).n; },
@@ -366,6 +498,82 @@ export const Db = {
     const expense = txs.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     return { income, expense };
   },
+
+  // ── ALARMS ───────────────────────────────────────────────────────────────
+  addAlarm(uid: number, chatId: number, text: string, fireAt: Date, intervalMin = 5, maxRepeats = 6): number {
+    return s.addAlarm.run(uid, chatId, text, fireAt.toISOString(), intervalMin, maxRepeats).lastInsertRowid as number;
+  },
+  getPendingAlarms(): any[] { return s.getPendingAlarms.all() as any[]; },
+  tickAlarm(id: number, nextFireAt: Date, done: boolean) {
+    s.updateAlarm.run(nextFireAt.toISOString(), done ? 'done' : 'pending', id);
+  },
+  confirmAlarm(id: number) { s.confirmAlarm.run(id); },
+  snoozeAlarm(id: number) { s.snoozeAlarm.run(id); },
+  getUserAlarms(uid: number): any[] { return s.getUserAlarms.all(uid) as any[]; },
+  cancelAlarm(id: number, uid: number) { s.cancelAlarm.run(id, uid); },
+
+  // ── TASKS ────────────────────────────────────────────────────────────────
+  addTask(uid: number, title: string, desc = '', project = 'Inbox', priority = 2, dueAt: string | null = null): number {
+    return s.addTask.run(uid, title, desc, project, priority, dueAt).lastInsertRowid as number;
+  },
+  getTasks(uid: number, excludeStatus = 'done'): any[] { return s.getTasks.all(uid, excludeStatus) as any[]; },
+  getAllTasks(uid: number): any[] { return (db.prepare(`SELECT * FROM tasks WHERE uid=? ORDER BY priority DESC, ts DESC`).all(uid) as any[]); },
+  getTask(uid: number, id: number): any { return s.getTask.get(id, uid); },
+  updateTaskStatus(uid: number, id: number, status: string) { s.updateTaskStatus.run(status, id, uid); },
+  doneTask(uid: number, id: number) { s.updateTaskStatus.run('done', id, uid); },
+  cancelTask(uid: number, id: number) { s.updateTaskStatus.run('cancelled', id, uid); },
+  deleteTask(uid: number, id: number) { s.deleteTask.run(id, uid); },
+
+  // ── NOTES ────────────────────────────────────────────────────────────────
+  addNote(uid: number, title: string, content: string, tags = ''): number {
+    return s.addNote.run(uid, title, content, tags).lastInsertRowid as number;
+  },
+  getNotes(uid: number, limit = 10): any[] { return s.getNotes.all(uid, limit) as any[]; },
+  getNote(uid: number, id: number): any { return s.getNote.get(id, uid); },
+  searchNotes(uid: number, q: string): any[] {
+    const like = `%${q}%`;
+    return s.searchNotes.all(uid, like, like, like) as any[];
+  },
+  updateNote(uid: number, id: number, title: string, content: string, tags: string) {
+    s.updateNote.run(title, content, tags, id, uid);
+  },
+  pinNote(uid: number, id: number, pin: boolean) { s.pinNote.run(pin ? 1 : 0, id, uid); },
+  deleteNote(uid: number, id: number) { s.deleteNote.run(id, uid); },
+
+  // ── HABITS ───────────────────────────────────────────────────────────────
+  addHabit(uid: number, name: string, emoji = '✅', frequency = 'daily', reminderTime = ''): number {
+    return s.addHabit.run(uid, name, emoji, frequency, reminderTime).lastInsertRowid as number;
+  },
+  getHabits(uid: number): any[] { return s.getHabits.all(uid) as any[]; },
+  logHabit(habitId: number, uid: number, date?: string) {
+    const d = date || new Date().toISOString().split('T')[0]!;
+    s.logHabit.run(habitId, uid, d);
+    const streak = (s.getHabitStreak.get(habitId) as any).n;
+    s.updateHabitStreak.run(streak, habitId);
+  },
+  getHabitLog(habitId: number, date: string): any { return s.getHabitLog.get(habitId, date); },
+  getHabitStreak(habitId: number): any { return s.getHabitStreak.get(habitId); },
+  updateHabitStreak(habitId: number, streak: number) { s.updateHabitStreak.run(streak, habitId); },
+  isHabitDoneToday(habitId: number): boolean {
+    const today = new Date().toISOString().split('T')[0]!;
+    return !!s.getHabitLog.get(habitId, today);
+  },
+  deleteHabit(uid: number, id: number) { s.deleteHabit.run(id, uid); },
+
+  // ── IMPROVEMENT ──────────────────────────────────────────────────────────
+  addImprovement(proposal: string, metrics: string): number {
+    return s.addImprovement.run(proposal, metrics).lastInsertRowid as number;
+  },
+  resolveImprovement(id: number, status: 'approved' | 'rejected', notes = '') {
+    s.updateImprovement.run(status, notes, id);
+  },
+  getPendingImprovements(): any[] { return s.getPendingImprovements.all() as any[]; },
+
+  // ── ERROR LOG ────────────────────────────────────────────────────────────
+  logError(module: string, message: string, stack = '') {
+    try { s.addError.run(module, message.slice(0, 1000), stack.slice(0, 2000)); } catch {}
+  },
+  getRecentErrors(limit = 50): any[] { return s.getErrors.all(limit) as any[]; },
 };
 
 log.info(`DB ready: ${Config.DB_PATH}`);

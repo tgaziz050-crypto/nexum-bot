@@ -15,10 +15,11 @@ function envList(prefix: string): string[] {
 export const Config = {
   BOT_TOKEN:   env("BOT_TOKEN"),
   DB_PATH:     env("DB_PATH", "./nexum.db"),
-  // ADMIN_IDS — владельцы бота, их данные изолированы от обычных юзеров
   ADMIN_IDS:   env("ADMIN_IDS").split(",").map(s => parseInt(s.trim())).filter(Boolean),
   PUBLIC_BOT:  env("PUBLIC_BOT", "true") === "true",
   NODE_PORT:   parseInt(env("NODE_PORT", "18790")),
+  WEBAPP_PORT: parseInt(env("WEBAPP_PORT", "3000")),
+  WEBAPP_URL:  env("WEBAPP_URL", ""),   // e.g. https://nexum-bot-production.up.railway.app
   LOG_LEVEL:   env("LOG_LEVEL", "info"),
 
   // AI ключи — все хранятся на Railway, в коде не появляются

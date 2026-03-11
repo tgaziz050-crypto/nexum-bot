@@ -1,5 +1,5 @@
 /**
- * NEXUM Finance App
+ * NEXUM Finance App — текстовый режим без инлайн кнопок
  */
 import { Db } from "../core/db.js";
 import { ask } from "../ai/engine.js";
@@ -16,7 +16,7 @@ function startOfDay(): Date {
   const d = new Date(); d.setHours(0,0,0,0); return d;
 }
 
-export async function sendFinanceDashboard(bot: any, chatId: number, uid: number, msgId?: number) {
+export async function sendFinanceDashboard(bot: any, chatId: number, uid: number) {
   Db.finEnsureDefaults(uid);
   const accounts = Db.finGetAccounts(uid);
   const now = new Date();
@@ -43,35 +43,23 @@ export async function sendFinanceDashboard(bot: any, chatId: number, uid: number
     }
   }
 
-  const kb = buildFinKb();
-  try {
-    if (msgId) {
-      await bot.api.editMessageText(chatId, msgId, text, { parse_mode:"Markdown", reply_markup:kb });
-    } else {
-      await bot.api.sendMessage(chatId, text, { parse_mode:"Markdown", reply_markup:kb });
-    }
-  } catch(e: any) {
-    if (!msgId) await bot.api.sendMessage(chatId, text, { reply_markup:kb }).catch(()=>{});
-  }
+  text += `\n━━━━━━━━━━━━━━━━━━━━\n`;
+  text += `📝 *Команды:*\n`;
+  text += `/spent — расходы за месяц\n`;
+  text += `/income — доходы\n`;
+  text += `/history — последние транзакции\n`;
+  text += `/accounts — мои счета\n`;
+  text += `/budgets — бюджеты\n`;
+  text += `/finai — AI анализ финансов\n`;
+  text += `\nИли просто напиши: _"потратил 50к на еду"_`;
+
+  await bot.api.sendMessage(chatId, text, { parse_mode:"Markdown" });
 }
 
-function buildFinKb() {
-  return { inline_keyboard: [
-    [{ text:"➕ Расход", callback_data:"fin:add:expense" }, { text:"💵 Доход", callback_data:"fin:add:income" }, { text:"🔄 Перевод", callback_data:"fin:add:transfer" }],
-    [{ text:"📋 История", callback_data:"fin:history" }, { text:"📊 Статистика", callback_data:"fin:stats" }, { text:"🏦 Счета", callback_data:"fin:accounts" }],
-    [{ text:"🎯 Бюджеты", callback_data:"fin:budgets" }, { text:"🤖 AI анализ", callback_data:"fin:ai_analysis" }],
-    [{ text:"❌ Закрыть", callback_data:"fin:close" }],
-  ]};
-}
-
-function backKb(back: string) {
-  return { inline_keyboard:[[{ text:"◀️ Назад", callback_data:back }]] };
-}
-
-async function sendHistory(bot: any, chatId: number, uid: number, msgId: number) {
+async function sendHistory(bot: any, chatId: number, uid: number) {
   const txs = Db.finGetTxs(uid, 15);
   if (!txs.length) {
-    await bot.api.editMessageText(chatId, msgId, `📋 *История пуста*\n\nДобавь первую транзакцию!`, { parse_mode:"Markdown", reply_markup:backKb("fin:dashboard") }).catch(()=>{});
+    await bot.api.sendMessage(chatId, `📋 *История пуста*\n\nДобавь первую транзакцию, написав мне:\n_"потратил 50000 на еду"_`, { parse_mode:"Markdown" });
     return;
   }
   let text = `📋 *Последние транзакции:*\n━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -81,10 +69,10 @@ async function sendHistory(bot: any, chatId: number, uid: number, msgId: number)
     const date = new Date(tx.ts).toLocaleDateString("ru",{day:"numeric",month:"short"});
     text += `${icon} ${sign}${fmt(tx.amount, tx.currency)}\n   ${tx.category}${tx.note?" · "+tx.note:""} · _${date}_\n\n`;
   }
-  await bot.api.editMessageText(chatId, msgId, text, { parse_mode:"Markdown", reply_markup:backKb("fin:dashboard") }).catch(()=>{});
+  await bot.api.sendMessage(chatId, text, { parse_mode:"Markdown" });
 }
 
-async function sendStats(bot: any, chatId: number, uid: number, msgId: number) {
+async function sendStats(bot: any, chatId: number, uid: number) {
   const now = new Date();
   const today = Db.finGetTotalByPeriod(uid, startOfDay(), now);
   const month = Db.finGetTotalByPeriod(uid, startOfMonth(), now);
@@ -101,20 +89,19 @@ async function sendStats(bot: any, chatId: number, uid: number, msgId: number) {
       text += `• ${c.category}: ${fmt(c.total)} _(${pct}%)_\n`;
     }
   }
-  await bot.api.editMessageText(chatId, msgId, text, { parse_mode:"Markdown", reply_markup:backKb("fin:dashboard") }).catch(()=>{});
+  await bot.api.sendMessage(chatId, text, { parse_mode:"Markdown" });
 }
 
-async function sendAccounts(bot: any, chatId: number, uid: number, msgId: number) {
+async function sendAccounts(bot: any, chatId: number, uid: number) {
   const accs = Db.finGetAccounts(uid);
   let text = `🏦 *Мои счета:*\n━━━━━━━━━━━━━━━━━━━━\n\n`;
   for (const a of accs) text += `${a.icon} *${a.name}*\n   ${fmt(a.balance, a.currency)}\n\n`;
   const total = accs.reduce((s,a)=>s+a.balance,0);
   text += `━━━━━━━━━━━━━━━━━━━━\n💰 *Итого: ${fmt(total)}*`;
-  const kb = { inline_keyboard:[[{ text:"➕ Добавить счёт", callback_data:"fin:account:add" }],[{ text:"◀️ Назад", callback_data:"fin:dashboard" }]] };
-  await bot.api.editMessageText(chatId, msgId, text, { parse_mode:"Markdown", reply_markup:kb }).catch(()=>{});
+  await bot.api.sendMessage(chatId, text, { parse_mode:"Markdown" });
 }
 
-async function sendBudgets(bot: any, chatId: number, uid: number, msgId: number) {
+async function sendBudgets(bot: any, chatId: number, uid: number) {
   const budgets = Db.finGetBudgets(uid);
   const cats = Db.finGetByCategory(uid, startOfMonth());
   let text = `🎯 *Бюджеты на месяц:*\n━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -129,11 +116,11 @@ async function sendBudgets(bot: any, chatId: number, uid: number, msgId: number)
       text += `${color} *${b.category}*\n   ${fmt(spent)} / ${fmt(b.amount)} (${pct}%)\n   ${"▓".repeat(bar)}${"░".repeat(10-bar)}\n\n`;
     }
   }
-  await bot.api.editMessageText(chatId, msgId, text, { parse_mode:"Markdown", reply_markup:backKb("fin:dashboard") }).catch(()=>{});
+  await bot.api.sendMessage(chatId, text, { parse_mode:"Markdown" });
 }
 
-async function sendAIAnalysis(bot: any, chatId: number, uid: number, msgId: number) {
-  await bot.api.editMessageText(chatId, msgId, `🤖 *Анализирую финансы...*`, { parse_mode:"Markdown" }).catch(()=>{});
+async function sendAIAnalysis(bot: any, chatId: number, uid: number) {
+  await bot.api.sendMessage(chatId, `🤖 *Анализирую финансы...*`, { parse_mode:"Markdown" });
   const now = new Date();
   const accounts = Db.finGetAccounts(uid);
   const { income, expense } = Db.finGetTotalByPeriod(uid, startOfMonth(), now);
@@ -149,8 +136,8 @@ async function sendAIAnalysis(bot: any, chatId: number, uid: number, msgId: numb
     { role:"user" as const, content:"Проанализируй мои финансы. Дай конкретные советы по оптимизации расходов. Честно и по делу, как личный финансовый советник." },
   ];
   const analysis = await ask(msgs, "analysis");
-  await bot.api.editMessageText(chatId, msgId, `🤖 *AI Анализ:*\n\n${analysis}`, { parse_mode:"Markdown", reply_markup:backKb("fin:dashboard") }).catch(async ()=>{
-    await bot.api.editMessageText(chatId, msgId, analysis, { reply_markup:backKb("fin:dashboard") }).catch(()=>{});
+  await bot.api.sendMessage(chatId, `🤖 *AI Анализ:*\n\n${analysis}`, { parse_mode:"Markdown" }).catch(async () => {
+    await bot.api.sendMessage(chatId, analysis).catch(()=>{});
   });
 }
 
@@ -176,27 +163,6 @@ export function getFinanceContext(uid: number): string {
 }
 
 export function registerFinanceHandlers(bot: any) {
-  bot.on("callback_query:data", async (ctx: any) => {
-    const data: string = ctx.callbackQuery?.data ?? "";
-    if (!data.startsWith("fin:")) return;
-    const uid = ctx.from.id;
-    const chatId = ctx.callbackQuery.message?.chat?.id;
-    const msgId = ctx.callbackQuery.message?.message_id;
-    await ctx.answerCallbackQuery().catch(()=>{});
-    try {
-      if (data==="fin:dashboard")      await sendFinanceDashboard(bot, chatId, uid, msgId);
-      else if (data==="fin:history")   await sendHistory(bot, chatId, uid, msgId);
-      else if (data==="fin:stats")     await sendStats(bot, chatId, uid, msgId);
-      else if (data==="fin:accounts")  await sendAccounts(bot, chatId, uid, msgId);
-      else if (data==="fin:ai_analysis") await sendAIAnalysis(bot, chatId, uid, msgId);
-      else if (data==="fin:budgets")   await sendBudgets(bot, chatId, uid, msgId);
-      else if (data==="fin:close")     await bot.api.deleteMessage(chatId, msgId).catch(()=>{});
-      else if (data.startsWith("fin:add:")) {
-        const type = data.split(":")[2];
-        const hints: any = { expense:`💸 *Добавить расход*\n\nНапиши мне:\n_"потратил 50000 на еду"_\n_"купил телефон за 2 млн"_`, income:`💵 *Добавить доход*\n\nНапиши:\n_"получил зарплату 5 миллионов"_`, transfer:`🔄 *Перевод*\n\nНапиши:\n_"перевёл 100000 с наличных на карту"_` };
-        await bot.api.editMessageText(chatId, msgId, hints[type]||"Напиши сумму", { parse_mode:"Markdown", reply_markup:backKb("fin:dashboard") }).catch(()=>{});
-      }
-    } catch(e: any) { log.error(`Finance error: ${e.message}`); }
-  });
-  log.info("Finance handlers registered");
+  // No more inline keyboard handlers needed — all via commands
+  log.info("Finance handlers registered (command mode)");
 }

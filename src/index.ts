@@ -48,7 +48,7 @@ async function main() {
   startNodeServer(nodePort, bot);
 
   // Scheduler напоминаний
-  startReminderScheduler(bot);
+  const runner = run(bot as any);
 
   // Cron задачи
   startScheduler(bot);

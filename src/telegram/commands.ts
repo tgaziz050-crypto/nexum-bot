@@ -142,37 +142,69 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("help", async (ctx) => {
     const uid = ctx.from!.id;
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
+    const name = ctx.from!.first_name ?? "друг";
 
-    const helpText =
-      `📖 *NEXUM v${Config.VERSION} — Commands*\n\n` +
-      `*Main:*\n` +
-      `/start — welcome\n` +
-      `/apps — mini applications\n` +
-      `/new — new conversation\n` +
-      `/memory — what I remember\n` +
-      `/forget — clear memory\n` +
-      `/status — system status\n` +
-      `/brief — daily digest\n\n` +
-      `*Finance:*\n` +
-      `/finance · /history · /accounts · /budgets\n\n` +
-      `*Tasks & Notes:*\n` +
-      `/tasks · /task <text>\n` +
-      `/notes · /note <text>\n` +
-      `/habits\n\n` +
-      `*Tools:*\n` +
-      `/remind <text> — set reminder\n` +
-      `/reminders — list reminders\n` +
-      `/search <query>\n\n` +
-      `*PC Agent:*\n` +
-      `/pc — agent status\n` +
-      `/pc_connect — install agent\n` +
-      `/link CODE — link device\n` +
-      `/screenshot — take screenshot\n` +
-      `/run <command> — run on PC\n` +
-      `/sysinfo — system info\n\n` +
-      `💬 Or just chat with me naturally!`;
+    const helpText = [
+      `⚡ *NEXUM — Твой автономный ИИ агент*`,
+      ``,
+      `Просто пиши мне что хочешь — я пойму.`,
+      `Вот что я умею:`,
+      ``,
+      `🧠 *Память и личность*`,
+      `• Помню всё о тебе между сессиями`,
+      `• Адаптируюсь под твой стиль общения`,
+      `• /memory — что я о тебе знаю`,
+      `• /forget — очистить память`,
+      `• /new — начать новый диалог`,
+      ``,
+      `🌐 *Интернет и поиск*`,
+      `• Ищу информацию в реальном времени`,
+      `• Анализирую сайты и ссылки`,
+      `• /search <запрос> — поиск`,
+      ``,
+      `🎙 *Голос и медиа*`,
+      `• Понимаю голосовые сообщения`,
+      `• Анализирую фото и изображения`,
+      `• Отвечаю голосом по запросу`,
+      ``,
+      `💰 *Финансы*`,
+      `• Трекаю расходы и доходы`,
+      `• Управляю счетами и бюджетами`,
+      `• /finance · /history · /accounts`,
+      ``,
+      `✅ *Задачи, заметки, привычки*`,
+      `• /tasks · /task <текст>`,
+      `• /notes · /note <текст>`,
+      `• /habits — трекер привычек`,
+      `• /remind <текст> — напоминание`,
+      ``,
+      `🖥 *PC Агент*`,
+      `• Управляю твоим компьютером`,
+      `• Открываю приложения, запускаю команды`,
+      `• Делаю скриншоты экрана`,
+      `• /pc_connect — подключить компьютер`,
+      `• /screenshot · /run <команда>`,
+      ``,
+      `🧰 *Динамические тулы*`,
+      `• Сам разрабатываю новые инструменты`,
+      `• /tools — список созданных тулов`,
+      `• /newtool <описание> — создать тул`,
+      ``,
+      `📱 *Мини-приложения*`,
+      `• Кнопка "Меню" внизу — все приложения`,
+      `• Финансы · Заметки · Задачи · Привычки`,
+      ``,
+      `⚙️ *Система*`,
+      `• /status — состояние системы`,
+      `• /brief — дневной дайджест`,
+      `• /apps — открыть приложения`,
+    ].join("\n");
 
-    await ctx.reply(helpText, { parse_mode: "Markdown" });
+    const kb = getMiniAppBtns(uid);
+    await ctx.reply(helpText, {
+      parse_mode: "Markdown",
+      reply_markup: kb ?? undefined,
+    });
   });
 
   // ── /new ─────────────────────────────────────────────────────────────
@@ -643,6 +675,48 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply("🔄 Restarting in 2 seconds...");
     log.info(`Restart requested by admin ${ctx.from!.id}`);
     setTimeout(() => process.exit(0), 2000);
+  });
+
+  // /diagnostic — check AI keys and system config (admin)
+  bot.command("diagnostic", async (ctx) => {
+    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Admin only."); return; }
+    const msg = await ctx.reply("🔍 *Проверяю систему...*", { parse_mode: "Markdown" });
+
+    const providers = [
+      { name: "Cerebras",   envs: ["CB1","CB2","CB3","CB4","CB5","CB6","CB7"] },
+      { name: "Groq",       envs: ["GR1","GR2","GR3","GR4","GR5","GR6","GR7"] },
+      { name: "Gemini",     envs: ["G1","G2","G3","G4","G5","G6","G7"] },
+      { name: "SambaNova",  envs: ["SN1","SN2","SN3","SN4","SN5"] },
+      { name: "Together",   envs: ["TO1","TO2","TO3","TO4","TO5"] },
+      { name: "Grok",       envs: ["GK1","GK2","GK3"] },
+      { name: "OpenRouter", envs: ["OR1","OR2","OR3"] },
+      { name: "DeepSeek",   envs: ["DS1","DS2","DS3"] },
+      { name: "Claude",     envs: ["CL1"] },
+    ];
+
+    const lines: string[] = ["🔑 *AI Keys:*\n"];
+    let totalKeys = 0;
+    for (const p of providers) {
+      const found = p.envs.filter(k => process.env[k]?.trim()).length;
+      totalKeys += found;
+      const icon = found > 0 ? "✅" : "❌";
+      lines.push(`${icon} ${p.name}: ${found}/${p.envs.length}`);
+    }
+
+    lines.push(`\n📊 *Итого ключей*: ${totalKeys}`);
+    lines.push(`\n⚙️ *Конфиг:*`);
+    lines.push(`• WEBAPP_URL: ${process.env.WEBAPP_URL ? "✅" : "❌ не задан"}`);
+    lines.push(`• BOT_TOKEN: ${process.env.BOT_TOKEN ? "✅" : "❌"}`);
+    lines.push(`• ADMIN_IDS: ${process.env.ADMIN_IDS ? "✅ " + process.env.ADMIN_IDS : "❌"}`);
+
+    try {
+      const result = await ask([{ role: "user", content: "Say exactly: NEXUM_OK" }], "fast");
+      lines.push(`\n🧠 *AI тест*: ${result?.includes("NEXUM_OK") || result?.length > 0 ? "✅ работает" : "⚠️ " + result?.slice(0,50)}`);
+    } catch (e: any) {
+      lines.push(`\n🧠 *AI тест*: ❌ ${e.message.slice(0, 150)}`);
+    }
+
+    await bot.api.editMessageText(ctx.chat!.id, msg.message_id, lines.join("\n"), { parse_mode: "Markdown" }).catch(() => {});
   });
 
   // ── DYNAMIC TOOLS COMMANDS ────────────────────────────────────────────────

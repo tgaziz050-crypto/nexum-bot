@@ -1,6 +1,6 @@
 /**
  * NEXUM — Heartbeat Monitor
- * Следит за здоровьем бота, AI провайдеров, БД и шедулера
+ * Silent health monitoring. Alerts ONLY to admin DM, never to chats.
  */
 import { Db } from "./db.js";
 import { log } from "./logger.js";
@@ -18,142 +18,136 @@ const state = {
   status: { bot: true, ai: true, db: true, lastCheck: new Date(), errors: [] } as HealthStatus,
   consecutiveFails: 0,
   lastAlertAt: 0,
+  lastRecoveryAt: 0,
   startTime: Date.now(),
   totalChecks: 0,
   failedChecks: 0,
+  silentUntil: 0,
 };
 
 let botRef: any = null;
 
 async function checkDB(): Promise<boolean> {
-  try {
-    Db.getStats();
-    return true;
-  } catch (e: any) {
-    Db.logError("heartbeat", `DB check failed: ${e.message}`);
-    return false;
-  }
+  try { Db.getStats(); return true; }
+  catch (e: any) { try { Db.logError("heartbeat", `DB: ${e.message}`); } catch {} return false; }
 }
 
 async function checkAI(): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    // Ping with a tiny fast request
-    const keys = Object.entries(process.env)
-      .filter(([k]) => k.startsWith("CB") && k.length <= 4)
-      .map(([, v]) => v)
-      .filter(Boolean);
-    if (!keys.length) return true; // no key = skip check
+  const cbKeys = Object.entries(process.env).filter(([k]) => /^CB\d+$/.test(k)).map(([,v]) => v!).filter(Boolean);
+  const grKeys = Object.entries(process.env).filter(([k]) => /^GR\d+$/.test(k)).map(([,v]) => v!).filter(Boolean);
+  const gKeys  = Object.entries(process.env).filter(([k]) => /^G\d+$/.test(k)).map(([,v]) => v!).filter(Boolean);
 
-    const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${keys[0]}` },
-      body: JSON.stringify({
-        model: "llama-3.3-70b",
-        max_tokens: 5,
-        messages: [{ role: "user", content: "hi" }],
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    return res.ok || res.status === 429; // 429 = rate limit = service alive
-  } catch {
-    return false;
+  // Try fastest providers first
+  if (cbKeys[0]) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cbKeys[0]}` },
+        body: JSON.stringify({ model: "llama-3.3-70b", max_tokens: 5, messages: [{ role: "user", content: "hi" }] }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (res.ok || res.status === 429 || res.status === 400) return true;
+    } catch {}
   }
+  if (grKeys[0]) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${grKeys[0]}` },
+        body: JSON.stringify({ model: "llama-3.1-8b-instant", max_tokens: 5, messages: [{ role: "user", content: "hi" }] }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (res.ok || res.status === 429 || res.status === 400) return true;
+    } catch {}
+  }
+  if (gKeys[0]) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${gKeys[0]}`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }], generationConfig: { maxOutputTokens: 5 } }),
+          signal: ctrl.signal }
+      );
+      clearTimeout(t);
+      if (res.ok || res.status === 429 || res.status === 400) return true;
+    } catch {}
+  }
+  // If no keys configured, don't fail
+  if (!cbKeys.length && !grKeys.length && !gKeys.length) return true;
+  return false;
 }
 
 async function checkBot(): Promise<boolean> {
-  try {
-    if (!botRef) return true;
-    const me = await botRef.api.getMe();
-    return !!me?.id;
-  } catch {
-    return false;
+  try { if (!botRef) return true; const me = await botRef.api.getMe(); return !!me?.id; }
+  catch { return false; }
+}
+
+async function alertAdminDM(text: string) {
+  if (!botRef) return;
+  for (const adminId of Config.ADMIN_IDS) {
+    try { await botRef.api.sendMessage(adminId, text, { parse_mode: "Markdown" }); } catch {}
   }
 }
 
 async function runCheck() {
   state.totalChecks++;
   const errors: string[] = [];
-
   const [dbOk, aiOk, botOk] = await Promise.all([checkDB(), checkAI(), checkBot()]);
 
-  if (!dbOk) errors.push("❌ БД недоступна");
-  if (!aiOk) errors.push("⚠️ AI провайдер недоступен");
-  if (!botOk) errors.push("❌ Telegram Bot API не отвечает");
+  if (!dbOk) errors.push("❌ DB offline");
+  if (!aiOk) errors.push("⚠️ AI providers unavailable");
+  if (!botOk) errors.push("❌ Telegram API not responding");
 
-  state.status = {
-    bot: botOk,
-    ai: aiOk,
-    db: dbOk,
-    lastCheck: new Date(),
-    errors,
-  };
+  state.status = { bot: botOk, ai: aiOk, db: dbOk, lastCheck: new Date(), errors };
+
+  const now = Date.now();
 
   if (errors.length > 0) {
     state.failedChecks++;
     state.consecutiveFails++;
     log.warn(`Heartbeat [${state.consecutiveFails} fails]: ${errors.join(", ")}`);
 
-    // Alert admins (rate limited: max 1 alert per 5 min)
-    const now = Date.now();
-    if (state.consecutiveFails >= 2 && now - state.lastAlertAt > 5 * 60_000) {
+    // Alert admin DM — max once per 10min, only after 3+ consecutive fails
+    if (state.consecutiveFails >= 3 && now - state.lastAlertAt > 10 * 60_000 && now > state.silentUntil) {
       state.lastAlertAt = now;
-      for (const adminId of Config.ADMIN_IDS) {
-        try {
-          await botRef?.api.sendMessage(adminId,
-            `⚠️ *NEXUM ALERT*\n\n${errors.join("\n")}\n\n` +
-            `Сбоев подряд: ${state.consecutiveFails}\n` +
-            `Время: ${new Date().toLocaleTimeString("ru")}`,
-            { parse_mode: "Markdown" }
-          );
-        } catch {}
-      }
+      await alertAdminDM(
+        `⚠️ *NEXUM Alert* (${state.consecutiveFails} fails)\n\n${errors.join("\n")}\n` +
+        `Time: ${new Date().toLocaleTimeString("ru")}`
+      );
     }
-
-    // Critical: 5+ consecutive fails
-    if (state.consecutiveFails >= 5) {
-      log.error("CRITICAL: 5+ consecutive heartbeat failures");
-      Db.logError("heartbeat", `Critical: ${state.consecutiveFails} consecutive fails`);
+    if (state.consecutiveFails === 10) {
+      try { Db.logError("heartbeat", `Critical: ${state.consecutiveFails} consecutive fails`); } catch {}
+      await alertAdminDM(`🚨 *NEXUM Critical*\n10+ failures. Use /restart if needed.`);
     }
   } else {
-    if (state.consecutiveFails > 0) {
-      log.info(`Heartbeat recovered after ${state.consecutiveFails} failures`);
-      // Notify admin on recovery
-      for (const adminId of Config.ADMIN_IDS) {
-        try {
-          await botRef?.api.sendMessage(adminId,
-            `✅ *NEXUM восстановлен*\n\nВсе сервисы работают нормально.`,
-            { parse_mode: "Markdown" }
-          );
-        } catch {}
-      }
+    if (state.consecutiveFails >= 3 && now - state.lastRecoveryAt > 15 * 60_000) {
+      state.lastRecoveryAt = now;
+      await alertAdminDM(`✅ *NEXUM Recovered*\nAll services online.`);
     }
+    if (state.consecutiveFails > 0) log.info(`Heartbeat recovered after ${state.consecutiveFails} failures`);
     state.consecutiveFails = 0;
   }
 }
 
 export function startHeartbeat(bot: any) {
   botRef = bot;
-  // Check every 30 seconds
-  setInterval(runCheck, 30_000);
-  // First check after 10s
-  setTimeout(runCheck, 10_000);
-  log.info("Heartbeat monitor started (30s interval)");
+  setInterval(runCheck, 60_000);
+  setTimeout(runCheck, 30_000);
+  log.info("Heartbeat started (60s, DM-only alerts)");
 }
+
+export function silenceAlerts(minutes = 5) { state.silentUntil = Date.now() + minutes * 60_000; }
 
 export function getHealthStatus() {
   const uptime = Math.round((Date.now() - state.startTime) / 1000);
-  const uptimePct = state.totalChecks > 0
-    ? Math.round(((state.totalChecks - state.failedChecks) / state.totalChecks) * 100)
-    : 100;
-  return {
-    ...state.status,
-    uptime,
-    uptimePct,
-    totalChecks: state.totalChecks,
-    failedChecks: state.failedChecks,
-    consecutiveFails: state.consecutiveFails,
-  };
+  const uptimePct = state.totalChecks > 0 ? Math.round(((state.totalChecks - state.failedChecks) / state.totalChecks) * 100) : 100;
+  return { ...state.status, uptime, uptimePct, totalChecks: state.totalChecks, failedChecks: state.failedChecks, consecutiveFails: state.consecutiveFails };
 }

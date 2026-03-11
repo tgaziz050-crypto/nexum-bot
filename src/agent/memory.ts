@@ -128,11 +128,10 @@ export function buildSystemPrompt(uid: number, chatId: number, ct: ChatType, use
 
   // Dynamic tools context
   try {
-    // Sync require-style access to already-loaded registry
     const registryPath = new URL("../tools/dynamic/registry.json", import.meta.url).pathname;
-    const { readFileSync, existsSync } = await import("fs").then(m => m).catch(() => ({ readFileSync: null, existsSync: null }));
-    if (readFileSync && existsSync && existsSync(registryPath)) {
-      const reg = JSON.parse(readFileSync(registryPath, "utf8") as string) as Record<string, any>;
+    const fs = require("fs");
+    if (fs.existsSync(registryPath)) {
+      const reg = JSON.parse(fs.readFileSync(registryPath, "utf8")) as Record<string, any>;
       const activeTools = Object.values(reg).filter((t: any) => t.enabled);
       if (activeTools.length > 0) {
         const toolList = activeTools.map((t: any) => `- ${t.name}: ${t.description}`).join("\n");

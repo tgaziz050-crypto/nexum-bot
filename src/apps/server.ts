@@ -94,7 +94,7 @@ export function startWebAppServer(port: number) {
       const accs = Db.finGetAccounts(uid);
       const accId = account_id ?? accs[0]?.id;
       if (!accId) { res.status(400).json({ error: "No account" }); return; }
-      Db.finAddTx(uid, accId, type, parseFloat(amount), category, note ?? "");
+      Db.finAddTransaction(uid, type, parseFloat(amount), category, accId, note ?? "");
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

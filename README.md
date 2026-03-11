@@ -1,176 +1,147 @@
-# NEXUM v5 — Autonomous AI Agent Platform
+<div align="center">
 
-> Transform your Telegram into a powerful AI agent that plans, executes, and automates.
+# ⚡ NEXUM
+
+<img src="https://raw.githubusercontent.com/thenexumai/nexum-bot/main/assets/logo.png" alt="NEXUM Logo" width="160" height="160" />
+
+### Autonomous AI Agent Platform for Telegram
+
+*Plan · Execute · Automate · Remember*
+
+[![Railway](https://img.shields.io/badge/Deploy-Railway-blueviolet?style=for-the-badge&logo=railway)](https://railway.app)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=for-the-badge&logo=typescript)](https://typescriptlang.org)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=for-the-badge&logo=telegram)](https://t.me/ainexum_bot)
+
+</div>
 
 ---
 
-## 🏗 Architecture
+## 🧠 Architecture
 
 ```
-User
- ↓
-Telegram Bot
- ↓
-Gateway (grammy)
- ↓
-Message Router (intent detection)
- ↓
-Agent Core
- ↓
-┌─────────────┬──────────────┐
-│   Planner   │   Executor   │
-│  (plans)    │  (runs tools)│
-└─────────────┴──────────────┘
- ↓
-Tools System
-┌────────┬────────────┬────────┬──────────┐
-│ Search │ Web/Browser│ Notes  │ Finance  │
-│  STT   │    TTS     │ Tasks  │ Habits   │
-│ Vision │  Reminder  │ Alarm  │ Memory   │
-└────────┴────────────┴────────┴──────────┘
- ↓
-PC Agent (WebSocket — secure linking)
+User → Telegram → Gateway → Message Router → Agent Core
+                                                  ↓
+                                            Task Planner
+                                                  ↓
+                                          Action Executor
+                                                  ↓
+                                          Tools & PC Agent
 ```
 
----
+## ✨ Features
 
-## ✨ What's New in v5
+| Category | Capabilities |
+|----------|-------------|
+| 🤖 **AI Agent** | Intent detection, task planning, multi-step execution |
+| 🎙 **Voice** | STT (Whisper) + TTS (Edge-TTS), 50+ languages |
+| 👁 **Vision** | Photo analysis via Gemini |
+| 💻 **PC Agent** | Mouse, keyboard, terminal, screenshots, file ops |
+| 💰 **Finance** | Transactions, budgets, CBU exchange rates |
+| 📝 **Notes** | Full CRUD with search and pinning |
+| ✅ **Tasks** | Projects, priorities, due dates |
+| 🎯 **Habits** | Daily tracking with streaks |
+| 🔔 **Reminders** | Natural language parsing |
+| 🧠 **Memory** | Persistent user facts across sessions |
 
-### 🔐 Secure PC Agent Linking
-- Agent generates a **6-char code** on startup
-- User sends `/link ABCDEF` to the bot
-- Server pairs `uid ↔ device_id` — **bot token never exposed**
+## 🚀 Quick Start
 
-### 🗺 Task Planner
-- Detects complex multi-step requests automatically
-- Breaks them into concrete steps
-- Executes using available tools
-- Asks confirmation for sensitive actions
+### 1. Clone & Configure
 
-### 🧠 Improved Memory
-- Fast regex extraction for immediate facts
-- Deep AI extraction for complex context
-- Long-term memory bank with importance ranking
+```bash
+git clone https://github.com/thenexumai/nexum-bot.git
+cd nexum-bot
+cp .env.example .env
+```
 
-### 📱 5 Mini-Apps
-- **Hub** — launcher for all apps
-- **Finance** — CBU rates, budgets, transactions
-- **Notes** — color-coded, pinnable, searchable
-- **Tasks** — projects, priorities, completion
-- **Habits** — daily tracker with streaks
+### 2. Set Environment Variables
 
----
-
-## 🚀 Deploy on Railway
-
-### Required Variables
 ```env
 BOT_TOKEN=your_telegram_bot_token
-ADMIN_IDS=your_telegram_user_id
+ADMIN_IDS=your_telegram_id
 WEBAPP_URL=https://your-project.up.railway.app
+
+# AI Keys (at least one required — all free)
+GR1=groq_key
+G1=gemini_key
+CB1=cerebras_key
+OR1=openrouter_key
 ```
 
-### AI Keys (add at least one free option)
-```env
-CB1=cerebras_key     # free, very fast
-GR1=groq_key         # free
-G1=gemini_key        # free tier
-GK1=grok_key
-DS1=deepseek_key
-OR1=openrouter_key   # free models available
-CL1=claude_key
-```
+### 3. Deploy to Railway
 
-### Optional: Web Search
-```env
-SERPER_KEY1=serper.dev key
-BRAVE_KEY1=brave search key
-```
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
 
----
+```bash
+railway up
+```
 
 ## 💻 PC Agent Setup
 
+The PC Agent runs on your local computer and connects to NEXUM via WebSocket.
+
 ```bash
-# 1. Download nexum_agent.py from repo
+# Install
+pip install websockets psutil pillow pyautogui
 
-# 2. Install deps
-pip install websockets psutil pillow
-
-# 3. Run (point to your Railway URL)
+# Run
 python nexum_agent.py wss://your-project.up.railway.app/ws
-
-# 4. Agent shows code: ABCDEF
-# 5. Send to bot: /link ABCDEF
 ```
 
-Agent capabilities:
-- `/screenshot` — capture screen
-- `/run command` — execute terminal command
-- `/sysinfo` — system information
-- Browser, filesystem, task automation
+**Linking flow:**
+1. Agent starts → displays a 6-character code
+2. Send `/link CODE` to the bot
+3. Agent is now connected ✅
 
----
+## 🤖 Commands
 
-## 📱 Bot Commands
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome & overview |
+| `/apps` | Open mini-apps hub |
+| `/pc` | PC Agent status |
+| `/link CODE` | Link PC Agent |
+| `/screenshot` | Take screenshot |
+| `/run CMD` | Execute terminal command |
+| `/finance` | Finance dashboard |
+| `/notes` | Notes manager |
+| `/tasks` | Task manager |
+| `/habits` | Habit tracker |
+| `/remind TEXT` | Set reminder |
+| `/memory` | View stored memories |
+| `/forget` | Clear all memories |
+| `/search QUERY` | Web search |
+| `/status` | System status |
+| `/admin` | Admin panel (admin only) |
 
-```
-/start      — Welcome
-/apps       — All mini-apps
-/help       — Full command list
-/new        — New conversation
-/memory     — View memory
-/status     — System status
-/brief      — Day digest
+## 📱 Mini Apps
 
-/finance    — Finance overview
-/notes      — Notes app
-/tasks      — Tasks
-/habits     — Habit tracker
-/remind     — Set reminder
-/search     — Web search
+Access via `/apps` or the Hub button:
 
-/link CODE  — Link PC agent
-/pc         — PC agent status
-/pc_connect — Setup guide
-/screenshot — PC screenshot
-/run CMD    — Run on PC
-/sysinfo    — PC system info
-```
+- **💰 Finance** — Track income, expenses, budgets
+- **📝 Notes** — Save and organize notes
+- **✅ Tasks** — Manage tasks and projects
+- **🎯 Habits** — Build daily habits
 
----
+## 🔒 Security
+
+- Bot token never sent to PC Agent
+- All PC ↔ Server communication via WebSocket
+- Sensitive actions require user confirmation
+- HMAC-based mini-app token auth
 
 ## 🛠 Tech Stack
 
-- **Runtime**: Node.js 20 + TypeScript
-- **Bot**: Grammy v1.30
-- **DB**: SQLite (better-sqlite3)
-- **Voice**: Groq Whisper STT + Edge-TTS (50+ languages)
-- **Vision**: Gemini / OpenRouter / Claude
-- **PC Agent**: Python + WebSocket
-- **Deploy**: Railway / Docker
-
----
-
-## 📁 Project Structure
-
-```
-nexum-v5/
-├── src/
-│   ├── core/          # Config, DB, Logger, Heartbeat
-│   ├── agent/         # AI Engine, Memory, Planner, Executor, Router, PC Agent Server
-│   ├── telegram/      # Bot, Handler, Commands, Send, Format, Reactions
-│   ├── tools/         # STT, TTS, Search, Vision, Notes, Tasks, Habits, Finance, Reminder, Alarm
-│   ├── apps/          # Mini-app HTML + Express server
-│   ├── scheduler/     # Cron jobs, daily digest
-│   ├── admin/         # Admin dashboard
-│   └── index.ts       # Entry point
-├── nexum_agent.py     # PC Agent (Python)
-└── README.md
-```
+- **Runtime:** Node.js 20 + TypeScript
+- **Bot:** grammY
+- **DB:** SQLite (better-sqlite3)
+- **AI:** Cerebras, Groq, Gemini, OpenRouter, SambaNova, Together (all free)
+- **Voice:** Groq Whisper + Edge-TTS
+- **PC Agent:** Python + WebSocket
 
 ---
 
 <div align="center">
-NEXUM v5 · <a href="https://t.me/ainexum_bot">@ainexum_bot</a>
+
+Made with ❤️ by [thenexumai](https://github.com/thenexumai)
+
 </div>

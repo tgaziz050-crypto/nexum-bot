@@ -83,7 +83,7 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
   // Finance auto-detect
   if (intent === "finance" && ct === "private") {
     try {
-      const tx = await parseFinanceFromText(userText, uid);
+      const tx = await parseFinanceFromText(userText);
       if (tx) {
         const finCtx = getFinanceContext(uid);
         const sys = buildSystemPrompt(uid, chatId, ct, userText);
@@ -254,7 +254,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
     if (!text.trim() || text.startsWith("/")) return;
 
     try {
-      await smartReact(ctx as any);
+      await smartReact(bot as any, ctx.chat!.id, ctx.message!.message_id, text);
     } catch {}
 
     try {

@@ -135,11 +135,11 @@ export function registerCommands(bot: Bot<BotContext>) {
     const chatId = ctx.chat!.id;
     const text   = ctx.match?.trim();
     if (!text) { await ctx.reply("📝 Напиши что напомнить: `/remind в 15:00 позвонить Джону`", { parse_mode:"Markdown" }); return; }
-    const { date, text: remText } = await parseReminderTime(text);
+    const date = parseReminderTime(text);
     if (!date) { await ctx.reply("❓ Не понял время. Попробуй: 'через 30 минут', 'завтра в 10', 'в 15:30'"); return; }
-    Db.addReminder(uid, chatId, remText, date);
+    Db.addReminder(uid, chatId, text, date);
     const ts = date.toLocaleString("ru", { timeZone:"Asia/Tashkent", dateStyle:"short", timeStyle:"short" });
-    await ctx.reply(`✅ Напомню: **${remText}**\n🕐 В ${ts}`, { parse_mode:"Markdown" });
+    await ctx.reply(`✅ Напомню: **${text}**\n🕐 В ${ts}`, { parse_mode:"Markdown" });
   });
 
   bot.command("reminders", async (ctx) => {

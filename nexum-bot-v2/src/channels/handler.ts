@@ -79,7 +79,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
     if (ct !== "private") {
       const mentioned = await isMentionedOrReplied(ctx, ctx.me.username ?? "");
       if (!mentioned) {
-        if (ct !== "private") Db.grpSave(ctx.chat!.id, uid, ctx.from!.first_name??"", ctx.from!.username??"");
+        Db.grpSave(ctx.chat!.id, uid, ctx.from!.first_name??"", ctx.from!.username??"");
         return;
       }
     }

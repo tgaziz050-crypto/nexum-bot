@@ -55,7 +55,7 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
   if (intent === "link_code") {
     const code = extractLinkCode(userText);
     if (code) {
-      const ok = await consumeLinkCode(uid, code, ctx.api as any);
+      const ok = await consumeLinkCode(uid, code);
       if (ok) {
         await ctx.reply("✅ *Устройство успешно привязано!*\n\nPC Agent подключён к твоему аккаунту.", { parse_mode: "Markdown" });
       } else {
@@ -105,7 +105,7 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
     try {
       const alarm = parseAlarmTime(userText);
       if (alarm) {
-        Db.addAlarm(uid, chatId, userText, alarm.toISOString());
+        Db.addAlarm(uid, chatId, userText, alarm);
         await ctx.reply(`🔔 Будильник установлен на ${alarm.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}`);
         return;
       }
@@ -114,8 +114,8 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
 
   // Note auto-extract
   if (intent === "note" && ct === "private") {
-    const saved = await tryExtractNote(uid, userText);
-    if (saved) {
+    const noteResult = tryExtractNote(uid, userText);
+    if (noteResult?.saved) {
       await ctx.reply("📝 Заметка сохранена!");
       return;
     }
@@ -123,7 +123,7 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
 
   // Task auto-extract
   if (intent === "task" && ct === "private") {
-    const saved = await tryExtractAndSaveTask(uid, userText);
+    const saved = await tryExtractAndSaveTask(uid, chatId, userText);
     if (saved) {
       await ctx.reply("✅ Задача добавлена!");
       return;
@@ -244,7 +244,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
     const text = ctx.message.text ?? "";
 
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
-    Db.incMsgCount(uid);
+
 
     if (ct !== "private") {
       const mentioned = await isMentionedOrReplied(ctx, (await ctx.me).username ?? "");
@@ -271,7 +271,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
     const uid = ctx.from!.id;
     const ct  = ctx.chat!.type as ChatType;
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
-    Db.incMsgCount(uid);
+
 
     if (ct !== "private") {
       const mentioned = await isMentionedOrReplied(ctx, (await ctx.me).username ?? "");
@@ -343,7 +343,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
 
     await ctx.replyWithChatAction("typing");
     try {
-      const photos = ctx.message.photos!;
+      const photos = ctx.message.photo!;
       const best   = photos[photos.length - 1];
       const file   = await ctx.api.getFile(best.file_id);
       const url    = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;

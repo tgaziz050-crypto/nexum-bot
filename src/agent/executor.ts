@@ -42,7 +42,7 @@ export async function executeStep(
 
       case "notes_add": {
         const { Db } = await import("../core/db.js");
-        Db.addNote(uid, step.input, "📝");
+        Db.addNote(uid, step.input.slice(0, 50), step.input, '');
         output = `Заметка добавлена: ${step.input}`;
         success = true;
         break;
@@ -50,7 +50,7 @@ export async function executeStep(
 
       case "task_add": {
         const { Db } = await import("../core/db.js");
-        Db.addTask(uid, step.input, "", 2, "");
+        Db.addTask(uid, step.input);
         output = `Задача добавлена: ${step.input}`;
         success = true;
         break;

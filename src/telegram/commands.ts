@@ -152,7 +152,7 @@ export function registerCommands(bot: Bot<BotContext>) {
     }
 
     const { consumeLinkCode } = await import("../agent/pcagent.js");
-    const ok = await consumeLinkCode(uid, code, bot as any);
+    const ok = await consumeLinkCode(uid, code);
     if (ok) {
       await ctx.reply(
         `✅ *Устройство привязано!*\n\n` +
@@ -341,7 +341,7 @@ export function registerCommands(bot: Bot<BotContext>) {
     const uid = ctx.from!.id;
     const text = ctx.match?.trim();
     if (!text) { await ctx.reply("Использование: /note текст заметки"); return; }
-    Db.addNote(uid, text, "📝");
+    Db.addNote(uid, text.slice(0, 50), text, "");
     await ctx.reply("📝 Заметка сохранена!");
   });
 
@@ -368,7 +368,7 @@ export function registerCommands(bot: Bot<BotContext>) {
     const uid = ctx.from!.id;
     const text = ctx.match?.trim();
     if (!text) { await ctx.reply("Использование: /task название задачи"); return; }
-    Db.addTask(uid, text, "", 2, "");
+    Db.addTask(uid, text);
     await ctx.reply("✅ Задача добавлена!");
   });
 
@@ -393,7 +393,7 @@ export function registerCommands(bot: Bot<BotContext>) {
   // ── /memory ───────────────────────────────────────────────────────────
   bot.command("memory", async (ctx) => {
     const uid = ctx.from!.id;
-    const mems = Db.getMemories(uid, 30);
+    const mems = Db.getMemories(uid);
     const lm = Db.getLongMem(uid);
     if (!mems.length && !Object.keys(lm).length) {
       await ctx.reply("🧠 Память пуста. Просто общайся со мной — я запомню всё важное.");
@@ -444,7 +444,7 @@ export function registerCommands(bot: Bot<BotContext>) {
     if (!text) { await ctx.reply("Использование: /remind через 30 минут позвонить маме"); return; }
     const fireAt = parseReminderTime(text);
     if (!fireAt) { await ctx.reply("🤔 Не понял время. Пример: /remind через 1 час встреча"); return; }
-    Db.addReminder(uid, ctx.chat!.id, text, fireAt.toISOString());
+    Db.addReminder(uid, ctx.chat!.id, text, fireAt);
     await ctx.reply(`⏰ Напоминание установлено на ${fireAt.toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}`);
   });
 
@@ -466,7 +466,8 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^rem:cancel:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    Db.cancelReminder(parseInt(ctx.match[1]));
+    const uid_rem = ctx.from!.id;
+    Db.cancelReminder(parseInt(ctx.match[1]), uid_rem);
     await ctx.editMessageText("✅ Напоминание удалено.");
   });
 
@@ -534,7 +535,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       `⚙️ *Admin Panel*\n\n` +
       `👥 Юзеров: ${stats.users}\n` +
       `💬 Сообщений: ${stats.messages}\n` +
-      `💾 БД: ${stats.dbSize ?? "?"} MB`,
+      `💾 БД: OK`,
       { parse_mode: "Markdown",
         reply_markup: { inline_keyboard: [
           [{ text: "📊 Stats", callback_data: "admin:stats" }, { text: "📋 Logs", callback_data: "admin:logs" }],
@@ -613,12 +614,12 @@ export function registerCommands(bot: Bot<BotContext>) {
     const text = top.map((u: any, i: number) => `${i + 1}. ${u.name || "?"} (${u.uid}) — ${u.total_msgs} msg`).join("\n");
     await ctx.reply(`👥 *Users:*\n\n${text}`, { parse_mode: "Markdown" });
   });
-}
 
-  // ── /restart — Admin restart ──────────────────────────────────────────
+  // ── /restart ────────────────────────────────────────────────────────────
   bot.command("restart", async (ctx) => {
     if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Нет доступа."); return; }
     await ctx.reply("🔄 Перезапуск через 2 секунды...");
     log.info(`Restart requested by admin ${ctx.from!.id}`);
-    setTimeout(() => process.exit(0), 2000); // Railway автоматически перезапустит
+    setTimeout(() => process.exit(0), 2000);
   });
+}

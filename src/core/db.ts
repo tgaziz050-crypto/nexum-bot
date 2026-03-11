@@ -574,6 +574,21 @@ export const Db = {
     try { s.addError.run(module, message.slice(0, 1000), stack.slice(0, 2000)); } catch {}
   },
   getRecentErrors(limit = 50): any[] { return s.getErrors.all(limit) as any[]; },
+
+  // Convenience methods added in v5
+  clearMemory(uid: number) {
+    db.prepare(`DELETE FROM memories WHERE uid=?`).run(uid);
+    db.prepare(`DELETE FROM long_memory WHERE uid=?`).run(uid);
+    db.prepare(`DELETE FROM memory_bank WHERE uid=?`).run(uid);
+  },
+
+  updateUserLastSeen(uid: number) {
+    db.prepare(`UPDATE users SET last_seen=datetime('now') WHERE uid=?`).run(uid);
+  },
+
+  incMsgCount(uid: number) {
+    db.prepare(`UPDATE users SET total_msgs=total_msgs+1, last_seen=datetime('now') WHERE uid=?`).run(uid);
+  },
 };
 
 log.info(`DB ready: ${Config.DB_PATH}`);

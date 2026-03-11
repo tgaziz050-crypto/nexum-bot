@@ -54,7 +54,7 @@ export function generateLinkCode(deviceId: string, platform: string): string {
 }
 
 // Called when user sends a linking code to the bot
-export async function consumeLinkCode(uid: number, code: string, bot: Bot<BotContext>): Promise<boolean> {
+export async function consumeLinkCode(uid: number, code: string, bot?: any): Promise<boolean> {
   const result = DbV5.consumeLinkingCode(code.toUpperCase().trim());
   if (!result) return false;
 
@@ -63,9 +63,10 @@ export async function consumeLinkCode(uid: number, code: string, bot: Bot<BotCon
   DbV5.linkDevice(uid, deviceId, deviceName, platform);
 
   // Find the waiting agent WS and bind uid
-  for (const [, agent] of agents.entries()) {
+  for (const [key, agent] of agents.entries()) {
     if (agent.deviceId === deviceId && agent.uid === 0) {
       agent.uid = uid;
+      agents.delete(key);
       agents.set(uid, agent);
       agent.ws.send(JSON.stringify({ type: "linked", uid }));
       Db.upsertAgent(uid, deviceName, platform);

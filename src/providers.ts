@@ -1,5 +1,5 @@
-import { Config } from "../core/config.js";
-import { log } from "../core/logger.js";
+import { Config } from "./core/config.js";
+import { log } from "./core/logger.js";
 
 export type Msg = { role: "system" | "user" | "assistant"; content: string };
 

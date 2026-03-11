@@ -70,10 +70,10 @@ When user asks you to DO something complex → break it into steps, confirm plan
 
 export function buildSystemPrompt(uid: number, chatId: number, ct: ChatType, userMsg = ""): string {
   const user = Db.getUser(uid);
-  const mems = Db.getMemories(uid, 30);
+  const mems = Db.getMemories(uid);
   const lm   = Db.getLongMem(uid);
   const agent = Db.getAgent(uid);
-  const devices = (Db as any).getLinkedDevices?.(uid) ?? [];
+  const devices: any[] = [];
 
   let sys = SOUL;
 

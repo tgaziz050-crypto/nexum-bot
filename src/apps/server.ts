@@ -52,9 +52,9 @@ export function startWebAppServer(port: number) {
       const now  = new Date();
       const from = new Date(now.getFullYear(), now.getMonth(), 1);
       const accounts = Db.finGetAccounts(uid);
-      const { income, expense } = Db.finGetTotalByPeriod(uid, from, now);
+      const { income, expense } = Db.finGetTotalByPeriod(uid, from as Date, now as Date);
       const txs = Db.finGetTxs(uid, 30);
-      const categoryBreakdown = Db.finGetByCategory(uid, from);
+      const categoryBreakdown = Db.finGetByCategory(uid, from as Date);
       const budgets = Db.finGetBudgets(uid);
       const user = Db.getUser(uid);
       const habits = Db.getHabits(uid);

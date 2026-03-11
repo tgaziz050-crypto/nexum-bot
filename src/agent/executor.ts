@@ -1,10 +1,15 @@
 /**
- * NEXUM v5 — Action Executor
- * Executes plan steps using available tools
+ * NEXUM v5 — Action Executor (with Dynamic Tools)
+ * Executes plan steps using built-in tools + hot-loaded dynamic tools
  */
 import { DbV5 } from "../core/db.js";
 import { webSearch } from "../tools/search.js";
 import { log } from "../core/logger.js";
+import {
+  hasDynamicTool,
+  executeDynamicTool,
+  generateAndRegisterTool,
+} from "../tools/tool_registry.js";
 import type { PlanStep } from "./planner.js";
 
 export interface ExecutionResult {
@@ -35,7 +40,7 @@ export async function executeStep(
 
       case "web_search": {
         const result = await webSearch(step.input);
-        output = result ?? "Ничего не найдено";
+        output = result ?? "No results found";
         success = !!result;
         break;
       }
@@ -43,15 +48,15 @@ export async function executeStep(
       case "notes_add": {
         const { Db } = await import("../core/db.js");
         Db.addNote(uid, step.input.slice(0, 50), step.input, '');
-        output = `Заметка добавлена: ${step.input}`;
+        output = `Note saved: ${step.input}`;
         success = true;
         break;
       }
 
       case "task_add": {
         const { Db } = await import("../core/db.js");
-        Db.addTask(uid, step.input);
-        output = `Задача добавлена: ${step.input}`;
+        Db.addTask(uid, step.input, '', 'Inbox', 2, null);
+        output = `Task saved: ${step.input}`;
         success = true;
         break;
       }
@@ -62,29 +67,44 @@ export async function executeStep(
         break;
       }
 
+      // Special: self-develop a new tool on the fly
+      case "create_tool": {
+        const result = await generateAndRegisterTool(uid, step.input);
+        output = result.message;
+        success = result.success;
+        break;
+      }
+
       // PC Agent tools — require pcSend
       case "terminal":
       case "filesystem":
       case "browser":
       case "screenshot": {
         if (!pcSend) {
-          output = "PC Agent не подключён. Используй /pc_connect для подключения.";
+          output = "PC Agent not connected. Use /pc_connect to set it up.";
           success = false;
           break;
         }
         const result = await pcSend(uid, step.tool, { input: step.input });
-        output = result ?? "Команда выполнена";
+        output = result ?? "Command executed";
         success = true;
         break;
       }
 
       default: {
-        output = `Инструмент "${step.tool}" пока не реализован.`;
-        success = false;
+        // ── Dynamic tool fallback ─────────────────────────────────────────
+        if (hasDynamicTool(step.tool)) {
+          const result = await executeDynamicTool(step.tool, step.input);
+          output = result.output;
+          success = result.success;
+        } else {
+          output = `Tool "${step.tool}" not yet implemented.`;
+          success = false;
+        }
       }
     }
   } catch (e: any) {
-    output = `Ошибка: ${e.message}`;
+    output = `Error: ${e.message}`;
     success = false;
     log.debug(`Executor step ${step.id} failed: ${e.message}`);
   }
@@ -107,8 +127,7 @@ export async function executePlan(
 
   for (const step of steps) {
     if (isSensitive(step.tool)) {
-      // Sensitive steps are handled externally (need user confirmation)
-      results.push({ step, output: "Требует подтверждения", success: false });
+      results.push({ step, output: "Requires confirmation", success: false });
       continue;
     }
 
@@ -117,7 +136,6 @@ export async function executePlan(
 
     if (onStep) await onStep(result);
 
-    // Stop on failure of critical steps
     if (!result.success && step.tool !== "message") {
       log.debug(`Plan ${planId} stopped at step ${step.id}: ${result.output}`);
       break;
@@ -128,6 +146,4 @@ export async function executePlan(
   return results;
 }
 
-// ── Additional tools for mouse/keyboard/app control ───────────────────────
-// These are PC-agent only tools, passed through sendToAgent
 export const PC_TOOLS = ["terminal", "filesystem", "browser", "screenshot", "open_app", "mouse", "keyboard"];

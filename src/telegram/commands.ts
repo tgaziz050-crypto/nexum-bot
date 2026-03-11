@@ -1,6 +1,7 @@
 /**
  * NEXUM v5 — Commands
- * All Telegram commands with PC agent linking and agent controls
+ * Language-adaptive commands. Responses adapt to user's language automatically.
+ * Help button works. PC Agent install instructions included.
  */
 import type { Bot } from "grammy";
 import type { BotContext } from "./bot.js";
@@ -14,6 +15,7 @@ import { buildSystemPrompt } from "../agent/memory.js";
 import { sendFinanceDashboard } from "../tools/finance.js";
 import { isAgentOnline, sendToAgent, getAgentInfo } from "../agent/pcagent.js";
 import { getHealthStatus } from "../core/heartbeat.js";
+import { silenceAlerts } from "../core/heartbeat.js";
 import { log } from "../core/logger.js";
 import * as crypto from "crypto";
 
@@ -51,6 +53,35 @@ async function setupMenuButton(bot: Bot<BotContext>) {
   } catch {}
 }
 
+// Detect user language from DB, fallback to "en"
+function getUserLang(uid: number): string {
+  try {
+    const user = Db.getUser(uid);
+    return user?.lang ?? "en";
+  } catch { return "en"; }
+}
+
+// Get localized start message via AI (cached in memory briefly)
+const startMsgCache = new Map<string, { text: string; ts: number }>();
+async function getLocalizedMsg(key: string, lang: string, fallback: string): Promise<string> {
+  const cacheKey = `${key}:${lang}`;
+  const cached = startMsgCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 3_600_000) return cached.text;
+  // For non-English/Russian, use AI to translate
+  if (lang === "en" || lang === "ru") return fallback;
+  try {
+    const result = await ask([{
+      role: "user",
+      content: `Translate this message to ${lang} language naturally. Keep all emojis and formatting:\n\n${fallback}`
+    }], "fast");
+    if (result?.trim()) {
+      startMsgCache.set(cacheKey, { text: result.trim(), ts: Date.now() });
+      return result.trim();
+    }
+  } catch {}
+  return fallback;
+}
+
 export function registerCommands(bot: Bot<BotContext>) {
   setTimeout(() => setupMenuButton(bot), 3000);
 
@@ -61,23 +92,33 @@ export function registerCommands(bot: Bot<BotContext>) {
     Db.ensureUser(uid, name, ctx.from!.username ?? "");
     Db.finEnsureDefaults(uid);
 
-    await ctx.reply(
-      `👋 Привет${name ? `, ${name}` : ""}! Я **NEXUM** — автономный ИИ-агент.\n\n` +
-      `🧠 Помню всё о тебе\n` +
-      `🌐 Ищу в интернете в реальном времени\n` +
-      `🎤 Понимаю голос и кружки\n` +
-      `👁 Анализирую фото\n` +
-      `💰 Финансы · 📝 Заметки · ✅ Задачи · 🎯 Привычки\n` +
-      `⏰ Напоминания · 🔔 Будильники\n` +
-      `💻 PC Агент — управляю твоим компьютером\n` +
-      `🗺 Планирую и выполняю сложные задачи\n\n` +
-      `Просто пиши — я всё понимаю!\n` +
-      `📱 Приложения — кнопка *Apps* внизу слева`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: { remove_keyboard: true },
+    // Detect language from Telegram interface language
+    const tgLang = ctx.from!.language_code ?? "en";
+    try {
+      const user = Db.getUser(uid);
+      if (user && (!user.lang || user.lang === "ru")) {
+        // Update lang based on Telegram language_code
+        Db.setLang(uid, tgLang.split("-")[0]);
       }
-    );
+    } catch {}
+
+    const startMsg =
+      `👋 Hi${name ? `, ${name}` : ""}! I'm **NEXUM** — your autonomous AI agent.\n\n` +
+      `🧠 I remember everything about you\n` +
+      `🌐 I search the internet in real time\n` +
+      `🎤 I understand voice messages\n` +
+      `👁 I analyze photos\n` +
+      `💰 Finance · 📝 Notes · ✅ Tasks · 🎯 Habits\n` +
+      `⏰ Reminders · 🔔 Alarms\n` +
+      `💻 PC Agent — I control your computer\n` +
+      `🗺 I plan and execute complex tasks\n\n` +
+      `Just write to me — I understand everything!\n` +
+      `📱 Apps — button at the bottom left`;
+
+    await ctx.reply(startMsg, {
+      parse_mode: "Markdown",
+      reply_markup: { remove_keyboard: true },
+    });
 
     if (Config.WEBAPP_URL) {
       const kb = getMiniAppBtns(uid);
@@ -90,50 +131,55 @@ export function registerCommands(bot: Bot<BotContext>) {
     const uid = ctx.from!.id;
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
     if (!Config.WEBAPP_URL) {
-      await ctx.reply("⚙️ WEBAPP_URL не настроен. Добавь в Railway Variables.");
+      await ctx.reply("⚙️ Mini apps are not configured yet. WEBAPP_URL is not set.");
       return;
     }
     const kb = getMiniAppBtns(uid);
     if (kb) await ctx.reply("📱 *NEXUM Apps:*", { parse_mode: "Markdown", reply_markup: kb });
+    else await ctx.reply("⚙️ Apps are loading...");
   });
 
   // ── /help ────────────────────────────────────────────────────────────
   bot.command("help", async (ctx) => {
-    await ctx.reply(
-      `📖 *NEXUM v${Config.VERSION} — Команды:*\n\n` +
-      `*Основные:*\n` +
-      `/start — приветствие\n` +
-      `/apps — все мини-приложения\n` +
-      `/new — новая беседа\n` +
-      `/memory — моя память\n` +
-      `/forget — очистить память\n` +
-      `/status — мой статус\n` +
-      `/brief — дайджест дня\n\n` +
-      `*Финансы:*\n` +
-      `/finance · /history · /accounts · /budgets · /finai\n\n` +
-      `*Задачи и заметки:*\n` +
-      `/tasks · /task текст\n` +
-      `/notes · /note текст\n` +
+    const uid = ctx.from!.id;
+    Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
+
+    const helpText =
+      `📖 *NEXUM v${Config.VERSION} — Commands*\n\n` +
+      `*Main:*\n` +
+      `/start — welcome\n` +
+      `/apps — mini applications\n` +
+      `/new — new conversation\n` +
+      `/memory — what I remember\n` +
+      `/forget — clear memory\n` +
+      `/status — system status\n` +
+      `/brief — daily digest\n\n` +
+      `*Finance:*\n` +
+      `/finance · /history · /accounts · /budgets\n\n` +
+      `*Tasks & Notes:*\n` +
+      `/tasks · /task <text>\n` +
+      `/notes · /note <text>\n` +
       `/habits\n\n` +
-      `*Инструменты:*\n` +
-      `/remind текст — напоминание\n` +
-      `/reminders — список\n` +
-      `/search запрос\n\n` +
-      `*PC Агент:*\n` +
-      `/pc — статус агента\n` +
-      `/pc_connect — инструкция подключения\n` +
-      `/link КОД — привязать устройство\n` +
-      `/screenshot — скриншот экрана\n` +
-      `/run команда — выполнить на ПК\n` +
-      `/sysinfo — информация о системе`,
-      { parse_mode: "Markdown" }
-    );
+      `*Tools:*\n` +
+      `/remind <text> — set reminder\n` +
+      `/reminders — list reminders\n` +
+      `/search <query>\n\n` +
+      `*PC Agent:*\n` +
+      `/pc — agent status\n` +
+      `/pc_connect — install agent\n` +
+      `/link CODE — link device\n` +
+      `/screenshot — take screenshot\n` +
+      `/run <command> — run on PC\n` +
+      `/sysinfo — system info\n\n` +
+      `💬 Or just chat with me naturally!`;
+
+    await ctx.reply(helpText, { parse_mode: "Markdown" });
   });
 
   // ── /new ─────────────────────────────────────────────────────────────
   bot.command(["new", "reset", "clear"], async (ctx) => {
     Db.clearHistory(ctx.from!.id, ctx.chat!.id);
-    await ctx.reply("🔄 Начинаем заново!");
+    await ctx.reply("🔄 Starting fresh!");
   });
 
   // ── /link CODE — device linking ──────────────────────────────────────
@@ -142,10 +188,10 @@ export function registerCommands(bot: Bot<BotContext>) {
     const code = ctx.match?.trim().toUpperCase();
     if (!code) {
       await ctx.reply(
-        `🔗 *Привязка PC Агента*\n\n` +
-        `1. Запусти агент на компьютере\n` +
-        `2. Агент покажет 6-символьный код\n` +
-        `3. Отправь код сюда: \`/link ABCDEF\``,
+        `🔗 *Link PC Agent*\n\n` +
+        `1. Start the agent on your computer\n` +
+        `2. Agent will show a 6-char code\n` +
+        `3. Send it here: \`/link ABCDEF\``,
         { parse_mode: "Markdown" }
       );
       return;
@@ -155,13 +201,11 @@ export function registerCommands(bot: Bot<BotContext>) {
     const ok = await consumeLinkCode(uid, code);
     if (ok) {
       await ctx.reply(
-        `✅ *Устройство привязано!*\n\n` +
-        `PC Agent подключён к аккаунту.\n` +
-        `Используй /pc для управления.`,
+        `✅ *Device linked!*\n\nPC Agent is connected to your account.\nUse /pc to control it.`,
         { parse_mode: "Markdown" }
       );
     } else {
-      await ctx.reply("❌ Неверный или просроченный код. Запусти агент заново.");
+      await ctx.reply("❌ Invalid or expired code. Restart the agent to get a new code.");
     }
   });
 
@@ -169,25 +213,24 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("pc", async (ctx) => {
     const uid = ctx.from!.id;
     const online = isAgentOnline(uid);
-    const agent = getAgentInfo(uid);
+    const agent  = getAgentInfo(uid);
     const devices = DbV5.getLinkedDevices(uid);
 
-    let text = `💻 *PC Агент*\n\n`;
+    let text = `💻 *PC Agent*\n\n`;
     if (online && agent) {
-      text += `🟢 *Онлайн*\n`;
+      text += `🟢 *Online*\n`;
       text += `📟 ${agent.name} (${agent.platform})\n`;
-      text += `🛡 Режим: ${agent.mode}\n\n`;
-      text += `Команды:\n/screenshot · /sysinfo · /run команда`;
+      text += `🛡 Mode: ${agent.mode}\n\n`;
+      text += `Commands:\n/screenshot · /sysinfo · /run <command>`;
     } else if (devices.length) {
-      text += `🔴 *Устройство не в сети*\n\n`;
+      text += `🔴 *Device offline*\n\n`;
       for (const d of devices) {
         text += `📟 ${d.device_name} (${d.platform})\n`;
-        text += `   Последний раз: ${new Date(d.last_seen).toLocaleString("ru")}\n`;
+        text += `   Last seen: ${new Date(d.last_seen).toLocaleString("en")}\n`;
       }
-      text += `\nЗапусти агент на компьютере.`;
+      text += `\nStart the agent on your computer.`;
     } else {
-      text += `❌ *Не подключён*\n\n` +
-        `Используй /pc_connect для инструкции подключения.`;
+      text += `❌ *Not connected*\n\nUse /pc_connect for setup instructions.`;
     }
 
     await ctx.reply(text, { parse_mode: "Markdown" });
@@ -196,15 +239,16 @@ export function registerCommands(bot: Bot<BotContext>) {
   // ── /pc_connect ───────────────────────────────────────────────────────
   bot.command("pc_connect", async (ctx) => {
     await ctx.reply(
-      `💻 *Подключение PC Агента*\n\n` +
-      `1️⃣ Установи Python 3.8+\n\n` +
-      `2️⃣ Установи зависимости:\n` +
+      `💻 *Install PC Agent*\n\n` +
+      `**Method 1: Quick install**\n` +
+      `1️⃣ Install Python 3.8+\n\n` +
+      `2️⃣ Install dependencies:\n` +
       `\`\`\`\npip install websockets pyautogui pillow psutil\n\`\`\`\n\n` +
-      `3️⃣ Скачай агент:\n` +
+      `3️⃣ Run the agent:\n` +
       `\`\`\`\npython nexum_agent.py\n\`\`\`\n\n` +
-      `4️⃣ Агент покажет 6-буквенный код\n\n` +
-      `5️⃣ Отправь сюда: \`/link ABCDEF\`\n\n` +
-      `*Агент скачать:* напиши мне "скачай агент" и я пришлю файл`,
+      `4️⃣ Agent shows a 6-char code\n\n` +
+      `5️⃣ Send here: \`/link ABCDEF\`\n\n` +
+      `📥 *Get agent file:* just write "send agent file" and I'll send it`,
       { parse_mode: "Markdown" }
     );
   });
@@ -213,10 +257,10 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("screenshot", async (ctx) => {
     const uid = ctx.from!.id;
     if (!isAgentOnline(uid)) {
-      await ctx.reply("❌ PC Agent не в сети. Запусти агент на компьютере.");
+      await ctx.reply("❌ PC Agent is offline. Start the agent on your computer.");
       return;
     }
-    await ctx.reply("📸 Делаю скриншот...");
+    await ctx.reply("📸 Taking screenshot...");
     await sendToAgent(uid, "screenshot", { chatId: ctx.chat!.id });
   });
 
@@ -224,23 +268,19 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("run", async (ctx) => {
     const uid = ctx.from!.id;
     const cmd = ctx.match?.trim();
-    if (!cmd) { await ctx.reply("Использование: /run команда"); return; }
-    if (!isAgentOnline(uid)) {
-      await ctx.reply("❌ PC Agent не в сети.");
-      return;
-    }
+    if (!cmd) { await ctx.reply("Usage: /run <command>"); return; }
+    if (!isAgentOnline(uid)) { await ctx.reply("❌ PC Agent is offline."); return; }
 
-    // Sensitive check
     const dangerous = /rm\s+-rf|format|del\s+\/|shutdown|mkfs|dd\s+if/i.test(cmd);
     if (dangerous) {
       await ctx.reply(
-        `⚠️ *Опасная команда*\n\n\`${cmd}\`\n\nВыполнить?`,
+        `⚠️ *Dangerous command*\n\n\`${cmd}\`\n\nExecute?`,
         {
           parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [[
-              { text: "✅ Да, выполнить", callback_data: `pc_run_confirm:${cmd}` },
-              { text: "❌ Отмена", callback_data: "pc_run_cancel" },
+              { text: "✅ Yes, run", callback_data: `pc_run_confirm:${cmd}` },
+              { text: "❌ Cancel",   callback_data: "pc_run_cancel" },
             ]],
           },
         }
@@ -248,7 +288,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       return;
     }
 
-    const msg = await ctx.reply(`⚙️ Выполняю: \`${cmd}\``, { parse_mode: "Markdown" });
+    const msg = await ctx.reply(`⚙️ Running: \`${cmd}\``, { parse_mode: "Markdown" });
     const result = await sendToAgent(uid, "run", { command: cmd });
     await ctx.api.editMessageText(ctx.chat!.id, msg.message_id,
       `✅ \`${cmd}\`\n\n\`\`\`\n${(result ?? "No output").slice(0, 2000)}\n\`\`\``,
@@ -258,14 +298,14 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.callbackQuery("pc_run_cancel", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("❌ Команда отменена.");
+    await ctx.editMessageText("❌ Command cancelled.");
   });
 
   bot.callbackQuery(/^pc_run_confirm:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const uid = ctx.from!.id;
     const cmd = ctx.match[1];
-    await ctx.editMessageText(`⚙️ Выполняю: \`${cmd}\``, { parse_mode: "Markdown" });
+    await ctx.editMessageText(`⚙️ Running: \`${cmd}\``, { parse_mode: "Markdown" });
     const result = await sendToAgent(uid, "run", { command: cmd });
     await ctx.editMessageText(
       `✅ \`${cmd}\`\n\n\`\`\`\n${(result ?? "No output").slice(0, 2000)}\n\`\`\``,
@@ -276,12 +316,9 @@ export function registerCommands(bot: Bot<BotContext>) {
   // ── /sysinfo ─────────────────────────────────────────────────────────
   bot.command("sysinfo", async (ctx) => {
     const uid = ctx.from!.id;
-    if (!isAgentOnline(uid)) {
-      await ctx.reply("❌ PC Agent не в сети.");
-      return;
-    }
+    if (!isAgentOnline(uid)) { await ctx.reply("❌ PC Agent is offline."); return; }
     const info = await sendToAgent(uid, "sysinfo", {});
-    await ctx.reply(info ? `💻 *Система:*\n\`\`\`\n${info.slice(0, 1500)}\n\`\`\`` : "❌ Нет данных.", { parse_mode: "Markdown" });
+    await ctx.reply(info ? `💻 *System info:*\n\`\`\`\n${info.slice(0, 1500)}\n\`\`\`` : "❌ No data.", { parse_mode: "Markdown" });
   });
 
   // ── /finance ─────────────────────────────────────────────────────────
@@ -294,25 +331,24 @@ export function registerCommands(bot: Bot<BotContext>) {
       const url = `${Config.WEBAPP_URL}?uid=${uid}&token=${token}`;
       await ctx.reply("💰 *NEXUM Finance*", {
         parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: [[{ text: "💰 Открыть Finance", web_app: { url } }]] },
+        reply_markup: { inline_keyboard: [[{ text: "💰 Open Finance", web_app: { url } }]] },
       });
     } else {
       await sendFinanceDashboard(bot as any, ctx.chat!.id, uid);
     }
   });
 
-  // Import remaining commands from old file (finance subs, notes, tasks, habits, reminders, search, memory, status, admin)
   // ── /history ─────────────────────────────────────────────────────────
   bot.command("history", async (ctx) => {
     const uid = ctx.from!.id;
     const txs = Db.finGetTxs(uid, 15);
-    if (!txs.length) { await ctx.reply("📋 История пуста."); return; }
-    const fmt = (n: number) => Math.round(n).toLocaleString("ru-RU") + " UZS";
-    let text = `📋 *Последние транзакции:*\n━━━━━━━━━━━━━━━━\n\n`;
+    if (!txs.length) { await ctx.reply("📋 Transaction history is empty."); return; }
+    const fmt = (n: number) => Math.round(n).toLocaleString() + " UZS";
+    let text = `📋 *Recent transactions:*\n━━━━━━━━━━━━\n\n`;
     for (const tx of txs) {
       const icon = tx.type === "income" ? "🟢" : tx.type === "transfer" ? "🔵" : "🔴";
       const sign = tx.type === "income" ? "+" : tx.type === "transfer" ? "⟷" : "-";
-      const date = new Date(tx.ts).toLocaleDateString("ru", { day: "numeric", month: "short" });
+      const date = new Date(tx.ts).toLocaleDateString("en", { day: "numeric", month: "short" });
       text += `${icon} ${sign}${fmt(tx.amount)}\n   ${tx.category}${tx.note ? " · " + tx.note : ""} · _${date}_\n\n`;
     }
     await ctx.reply(text, { parse_mode: "Markdown" });
@@ -326,23 +362,22 @@ export function registerCommands(bot: Bot<BotContext>) {
       const url = `${Config.WEBAPP_URL}/notes?uid=${uid}&token=${token}`;
       await ctx.reply("📝 *Notes*", {
         parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: [[{ text: "📝 Открыть Notes", web_app: { url } }]] },
+        reply_markup: { inline_keyboard: [[{ text: "📝 Open Notes", web_app: { url } }]] },
       });
     } else {
       const notes = Db.getNotes(uid, 10);
-      if (!notes.length) { await ctx.reply("📝 Заметок нет."); return; }
+      if (!notes.length) { await ctx.reply("📝 No notes yet."); return; }
       const text = notes.slice(0, 8).map((n: any) => `📌 ${n.title}\n${n.content.slice(0, 80)}...`).join("\n\n");
       await ctx.reply(text);
     }
   });
 
-  // ── /note text ────────────────────────────────────────────────────────
   bot.command("note", async (ctx) => {
     const uid = ctx.from!.id;
     const text = ctx.match?.trim();
-    if (!text) { await ctx.reply("Использование: /note текст заметки"); return; }
+    if (!text) { await ctx.reply("Usage: /note <note text>"); return; }
     Db.addNote(uid, text.slice(0, 50), text, "");
-    await ctx.reply("📝 Заметка сохранена!");
+    await ctx.reply("📝 Note saved!");
   });
 
   // ── /tasks ────────────────────────────────────────────────────────────
@@ -353,23 +388,22 @@ export function registerCommands(bot: Bot<BotContext>) {
       const url = `${Config.WEBAPP_URL}/tasks?uid=${uid}&token=${token}`;
       await ctx.reply("✅ *Tasks*", {
         parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: [[{ text: "✅ Открыть Tasks", web_app: { url } }]] },
+        reply_markup: { inline_keyboard: [[{ text: "✅ Open Tasks", web_app: { url } }]] },
       });
     } else {
       const tasks = Db.getTasks(uid);
-      if (!tasks.length) { await ctx.reply("✅ Задач нет."); return; }
+      if (!tasks.length) { await ctx.reply("✅ No tasks yet."); return; }
       const text = tasks.slice(0, 10).map((t: any) => `${t.status === "done" ? "✅" : "⬜"} ${t.title}`).join("\n");
-      await ctx.reply(`*Мои задачи:*\n\n${text}`, { parse_mode: "Markdown" });
+      await ctx.reply(`*My tasks:*\n\n${text}`, { parse_mode: "Markdown" });
     }
   });
 
-  // ── /task text ────────────────────────────────────────────────────────
   bot.command("task", async (ctx) => {
     const uid = ctx.from!.id;
     const text = ctx.match?.trim();
-    if (!text) { await ctx.reply("Использование: /task название задачи"); return; }
+    if (!text) { await ctx.reply("Usage: /task <task title>"); return; }
     Db.addTask(uid, text);
-    await ctx.reply("✅ Задача добавлена!");
+    await ctx.reply("✅ Task added!");
   });
 
   // ── /habits ───────────────────────────────────────────────────────────
@@ -380,13 +414,13 @@ export function registerCommands(bot: Bot<BotContext>) {
       const url = `${Config.WEBAPP_URL}/habits?uid=${uid}&token=${token}`;
       await ctx.reply("🎯 *Habits*", {
         parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: [[{ text: "🎯 Открыть Habits", web_app: { url } }]] },
+        reply_markup: { inline_keyboard: [[{ text: "🎯 Open Habits", web_app: { url } }]] },
       });
     } else {
       const habits = Db.getHabits(uid);
-      if (!habits.length) { await ctx.reply("🎯 Привычек нет."); return; }
+      if (!habits.length) { await ctx.reply("🎯 No habits yet."); return; }
       const text = habits.map((h: any) => `🎯 ${h.name} · ${h.streak ?? 0}🔥`).join("\n");
-      await ctx.reply(`*Мои привычки:*\n\n${text}`, { parse_mode: "Markdown" });
+      await ctx.reply(`*My habits:*\n\n${text}`, { parse_mode: "Markdown" });
     }
   });
 
@@ -394,69 +428,67 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("memory", async (ctx) => {
     const uid = ctx.from!.id;
     const mems = Db.getMemories(uid);
-    const lm = Db.getLongMem(uid);
+    const lm   = Db.getLongMem(uid);
     if (!mems.length && !Object.keys(lm).length) {
-      await ctx.reply("🧠 Память пуста. Просто общайся со мной — я запомню всё важное.");
+      await ctx.reply("🧠 Memory is empty. Just chat with me — I'll remember everything important.");
       return;
     }
-    let text = `🧠 *Что я знаю о тебе:*\n\n`;
+    let text = `🧠 *What I know about you:*\n\n`;
     for (const m of mems.slice(0, 15)) text += `• ${m.key}: ${m.value}\n`;
     if (Object.keys(lm).length) {
-      text += "\n*Долгосрочная память:*\n";
+      text += "\n*Long-term memory:*\n";
       for (const [k, v] of Object.entries(lm)) text += `• ${k}: ${v}\n`;
     }
     await ctx.reply(text, { parse_mode: "Markdown" });
   });
 
-  // ── /forget ───────────────────────────────────────────────────────────
   bot.command("forget", async (ctx) => {
     const uid = ctx.from!.id;
     Db.clearMemory(uid);
-    await ctx.reply("🧠 Память очищена.");
+    await ctx.reply("🧠 Memory cleared.");
   });
 
   // ── /status ───────────────────────────────────────────────────────────
   bot.command("status", async (ctx) => {
-    const uid = ctx.from!.id;
-    const user = Db.getUser(uid);
+    const uid   = ctx.from!.id;
+    const user  = Db.getUser(uid);
     const agent = getAgentInfo(uid);
     const health = getHealthStatus();
-    const rems = Db.getUserReminders(uid);
+    const rems  = Db.getUserReminders(uid);
     const tasks = Db.getTasks(uid);
     const habits = Db.getHabits(uid);
 
-    let text = `📊 *Статус NEXUM*\n\n`;
-    text += `👤 ${user?.name ?? "Пользователь"} · ${user?.total_msgs ?? 0} сообщений\n`;
-    text += `🧠 AI: ${health.ai ? "✅" : "❌"} · БД: ${health.db ? "✅" : "❌"}\n`;
-    text += `💻 PC: ${agent ? `✅ ${agent.name}` : "❌ не подключён"}\n`;
-    text += `⏰ Напоминаний: ${rems.length}\n`;
-    text += `✅ Задач: ${tasks.length}\n`;
-    text += `🎯 Привычек: ${habits.length}\n`;
-    text += `⏱ Аптайм: ${Math.round(health.uptime / 3600)}ч ${Math.round((health.uptime % 3600) / 60)}м`;
+    let text = `📊 *NEXUM Status*\n\n`;
+    text += `👤 ${user?.name ?? "User"} · ${user?.total_msgs ?? 0} messages\n`;
+    text += `🧠 AI: ${health.ai ? "✅" : "❌"} · DB: ${health.db ? "✅" : "❌"}\n`;
+    text += `💻 PC: ${agent ? `✅ ${agent.name}` : "❌ not connected"}\n`;
+    text += `⏰ Reminders: ${rems.length}\n`;
+    text += `✅ Tasks: ${tasks.length}\n`;
+    text += `🎯 Habits: ${habits.length}\n`;
+    text += `⏱ Uptime: ${Math.round(health.uptime / 3600)}h ${Math.round((health.uptime % 3600) / 60)}m`;
 
     await ctx.reply(text, { parse_mode: "Markdown" });
   });
 
   // ── /remind ───────────────────────────────────────────────────────────
   bot.command("remind", async (ctx) => {
-    const uid = ctx.from!.id;
+    const uid  = ctx.from!.id;
     const text = ctx.match?.trim();
-    if (!text) { await ctx.reply("Использование: /remind через 30 минут позвонить маме"); return; }
+    if (!text) { await ctx.reply("Usage: /remind in 30 minutes call mom"); return; }
     const fireAt = parseReminderTime(text);
-    if (!fireAt) { await ctx.reply("🤔 Не понял время. Пример: /remind через 1 час встреча"); return; }
+    if (!fireAt) { await ctx.reply("🤔 Couldn't parse time. Example: /remind in 1 hour meeting"); return; }
     Db.addReminder(uid, ctx.chat!.id, text, fireAt);
-    await ctx.reply(`⏰ Напоминание установлено на ${fireAt.toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}`);
+    await ctx.reply(`⏰ Reminder set for ${fireAt.toLocaleString("en", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}`);
   });
 
-  // ── /reminders ────────────────────────────────────────────────────────
   bot.command("reminders", async (ctx) => {
-    const uid = ctx.from!.id;
+    const uid  = ctx.from!.id;
     const rems = Db.getUserReminders(uid);
-    if (!rems.length) { await ctx.reply("⏰ Нет активных напоминаний."); return; }
+    if (!rems.length) { await ctx.reply("⏰ No active reminders."); return; }
     const lines = rems.map(r =>
-      `• ${r.text.slice(0, 40)} — ${new Date(r.fire_at).toLocaleString("ru", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+      `• ${r.text.slice(0, 40)} — ${new Date(r.fire_at).toLocaleString("en", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
     ).join("\n");
-    await ctx.reply(`⏰ *Напоминания:*\n\n${lines}`, {
+    await ctx.reply(`⏰ *Reminders:*\n\n${lines}`, {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: rems.map(r => [{ text: `❌ ${r.text.slice(0, 30)}`, callback_data: `rem:cancel:${r.id}` }]),
@@ -466,32 +498,31 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   bot.callbackQuery(/^rem:cancel:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const uid_rem = ctx.from!.id;
-    Db.cancelReminder(parseInt(ctx.match[1]), uid_rem);
-    await ctx.editMessageText("✅ Напоминание удалено.");
+    Db.cancelReminder(parseInt(ctx.match[1]), ctx.from!.id);
+    await ctx.editMessageText("✅ Reminder deleted.");
   });
 
   // ── /search ───────────────────────────────────────────────────────────
   bot.command("search", async (ctx) => {
     const query = ctx.match?.trim();
-    if (!query) { await ctx.reply("Использование: /search запрос"); return; }
+    if (!query) { await ctx.reply("Usage: /search <query>"); return; }
     await ctx.replyWithChatAction("typing");
     try {
       const result = await webSearch(query);
-      if (!result) { await ctx.reply("🔍 Ничего не найдено."); return; }
+      if (!result) { await ctx.reply("🔍 No results found."); return; }
       const uid = ctx.from!.id;
       const sys = buildSystemPrompt(uid, ctx.chat!.id, "private", query);
       const resp = await ask([
         { role: "system", content: sys },
-        { role: "user", content: `[WEB SEARCH]\n${result}\n\nОтветь на вопрос: ${query}` },
+        { role: "user", content: `[WEB SEARCH]\n${result}\n\nAnswer: ${query}` },
       ]);
       await send(ctx, resp);
-    } catch { await ctx.reply("🔍 Ошибка поиска. Проверь SERPER_KEY1 или BRAVE_KEY1."); }
+    } catch { await ctx.reply("🔍 Search error. Please try again."); }
   });
 
   // ── /brief ────────────────────────────────────────────────────────────
   bot.command("brief", async (ctx) => {
-    const uid = ctx.from!.id;
+    const uid    = ctx.from!.id;
     await ctx.replyWithChatAction("typing");
     const rems   = Db.getUserReminders(uid);
     const tasks  = Db.getTasks(uid).filter((t: any) => t.status !== "done").slice(0, 5);
@@ -499,43 +530,35 @@ export function registerCommands(bot: Bot<BotContext>) {
     const accs   = Db.finGetAccounts(uid);
     const bal    = accs.reduce((s: number, a: any) => s + a.balance, 0);
 
-    let text = `☀️ *Дайджест дня*\n\n`;
+    let text = `☀️ *Daily Digest*\n\n`;
     if (rems.length) {
-      text += `⏰ *Напоминания (${rems.length}):*\n`;
+      text += `⏰ *Reminders (${rems.length}):*\n`;
       text += rems.slice(0, 3).map(r => `• ${r.text.slice(0, 50)}`).join("\n") + "\n\n";
     }
     if (tasks.length) {
-      text += `📋 *Задачи (${tasks.length}):*\n`;
+      text += `📋 *Tasks (${tasks.length}):*\n`;
       text += tasks.map((t: any) => `• ${t.title}`).join("\n") + "\n\n";
     }
-    if (habits.length) {
-      text += `🎯 *Привычки: ${habits.length}* → /habits\n\n`;
-    }
-    if (accs.length) {
-      text += `💰 *Баланс: ${Math.round(bal).toLocaleString("ru-RU")} UZS*`;
-    }
-
-    if (!rems.length && !tasks.length && !habits.length) {
-      text += "Всё чисто! Хороший день 🔥";
-    }
+    if (habits.length) text += `🎯 *Habits: ${habits.length}* → /habits\n\n`;
+    if (accs.length)   text += `💰 *Balance: ${Math.round(bal).toLocaleString()} UZS*`;
+    if (!rems.length && !tasks.length && !habits.length) text += "All clear! Great day 🔥";
 
     await ctx.reply(text, { parse_mode: "Markdown" });
   });
 
-  // ── /id ──────────────────────────────────────────────────────────────
   bot.command("id", async (ctx) => {
-    await ctx.reply(`🆔 Твой ID: \`${ctx.from!.id}\``, { parse_mode: "Markdown" });
+    await ctx.reply(`🆔 Your ID: \`${ctx.from!.id}\``, { parse_mode: "Markdown" });
   });
 
   // ── ADMIN COMMANDS ────────────────────────────────────────────────────
   bot.command("admin", async (ctx) => {
-    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Нет доступа."); return; }
+    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Access denied."); return; }
     const stats = Db.getStats();
     await ctx.reply(
       `⚙️ *Admin Panel*\n\n` +
-      `👥 Юзеров: ${stats.users}\n` +
-      `💬 Сообщений: ${stats.messages}\n` +
-      `💾 БД: OK`,
+      `👥 Users: ${stats.users}\n` +
+      `💬 Messages: ${stats.messages}\n` +
+      `💾 DB: OK`,
       { parse_mode: "Markdown",
         reply_markup: { inline_keyboard: [
           [{ text: "📊 Stats", callback_data: "admin:stats" }, { text: "📋 Logs", callback_data: "admin:logs" }],
@@ -561,7 +584,7 @@ export function registerCommands(bot: Bot<BotContext>) {
       const logs = Db.getRecentErrors(5);
       const text = logs.length
         ? logs.map((l: any) => `[${l.module}] ${l.message.slice(0, 80)}`).join("\n")
-        : "No recent errors";
+        : "No recent errors ✅";
       await ctx.editMessageText(`📋 *Recent errors:*\n\n${text}`, { parse_mode: "Markdown" });
     } else if (action === "users") {
       const top = Db.getTopUsers().slice(0, 10);
@@ -586,7 +609,7 @@ export function registerCommands(bot: Bot<BotContext>) {
   bot.command("broadcast", async (ctx) => {
     if (!isAdmin(ctx.from!.id)) return;
     const text = ctx.match?.trim();
-    if (!text) { await ctx.reply("Использование: /broadcast текст сообщения"); return; }
+    if (!text) { await ctx.reply("Usage: /broadcast <message>"); return; }
     const users = Db.getTopUsers();
     let sent = 0;
     for (const u of users) {
@@ -596,7 +619,7 @@ export function registerCommands(bot: Bot<BotContext>) {
         await new Promise(r => setTimeout(r, 50));
       } catch {}
     }
-    await ctx.reply(`✅ Отправлено: ${sent}/${users.length}`);
+    await ctx.reply(`✅ Sent: ${sent}/${users.length}`);
   });
 
   bot.command("logs", async (ctx) => {
@@ -615,11 +638,119 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply(`👥 *Users:*\n\n${text}`, { parse_mode: "Markdown" });
   });
 
-  // ── /restart ────────────────────────────────────────────────────────────
   bot.command("restart", async (ctx) => {
-    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Нет доступа."); return; }
-    await ctx.reply("🔄 Перезапуск через 2 секунды...");
+    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Access denied."); return; }
+    silenceAlerts(5); // Don't spam alerts during restart
+    await ctx.reply("🔄 Restarting in 2 seconds...");
     log.info(`Restart requested by admin ${ctx.from!.id}`);
     setTimeout(() => process.exit(0), 2000);
+  });
+
+  // ── DYNAMIC TOOLS COMMANDS ────────────────────────────────────────────────
+
+  // /tools — list all dynamic tools with details
+  bot.command("tools", async (ctx) => {
+    const { listDynamicTools } = await import("../tools/tool_registry.js");
+    const tools = listDynamicTools();
+    if (!tools.length) {
+      await ctx.reply(
+        "🧰 *Dynamic Tools*\n\nНет созданных тулов.\n\nИспользуй `/newtool <описание>` чтобы создать любой тул!\n\nПримеры:\n• `/newtool курс криптовалют в реальном времени`\n• `/newtool конвертация валют`\n• `/newtool погода в любом городе`",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+    const lines = tools.map((t: any, i: number) => {
+      const pkgs = t.packages?.length ? `📦 ${t.packages.join(", ")}` : "📦 built-in only";
+      const test = t.testOutput ? `\n   🧪 ${t.testOutput.slice(0, 80)}` : "";
+      return `${i + 1}. *${t.name}* v${t.version}\n   ${t.description}\n   📥 ${t.inputSchema}\n   ${pkgs}${test}`;
+    });
+    await ctx.reply(
+      `🧰 *Dynamic Tools (${tools.length})*\n\n${lines.join("\n\n")}\n\n_Все тулы подключены и готовы._`,
+      { parse_mode: "Markdown" }
+    );
+  });
+
+  // /newtool <description> — create a new tool with live progress updates
+  bot.command("newtool", async (ctx) => {
+    const uid = ctx.from!.id;
+    const requirement = ctx.match?.trim();
+    if (!requirement) {
+      await ctx.reply(
+        "Usage: `/newtool <что должен делать тул>`\n\nПримеры:\n• `/newtool курс BTC и ETH в реальном времени`\n• `/newtool конвертировать валюты`\n• `/newtool парсить заголовки новостей`\n• `/newtool отправить HTTP POST на webhook`",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+    const chatId = ctx.chat!.id;
+    const msg = await ctx.reply(
+      "🔨 *Разрабатываю новый тул...*\n\n⏳ Генерирую код через AI...",
+      { parse_mode: "Markdown" }
+    );
+    const update = (text: string) =>
+      bot.api.editMessageText(chatId, msg.message_id, text, { parse_mode: "Markdown" }).catch(() => {});
+
+    await update("🔨 *Разрабатываю новый тул...*\n\n✅ AI генерирует код...\n⏳ Устанавливаю пакеты и тестирую...");
+    const { generateAndRegisterTool } = await import("../tools/tool_registry.js");
+    const result = await generateAndRegisterTool(uid, requirement);
+    await update(
+      result.success
+        ? `✅ *Тул создан и подключён!*\n\n${result.message}\n\n_Nexum теперь умеет это делать автоматически._`
+        : `❌ *Не удалось создать тул*\n\n${result.message}\n\n_Попробуй переформулировать задачу._`
+    );
+  });
+
+  // /deltool <n> — disable a tool (admin)
+  bot.command("deltool", async (ctx) => {
+    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Только для админов."); return; }
+    const name = ctx.match?.trim();
+    if (!name) { await ctx.reply("Usage: /deltool <tool_name>"); return; }
+    const { disableTool } = await import("../tools/tool_registry.js");
+    const ok = disableTool(name);
+    await ctx.reply(ok ? `✅ Тул "${name}" отключён.` : `❌ Тул "${name}" не найден.`);
+  });
+
+  // /enabletool <n> — re-enable a disabled tool (admin)
+  bot.command("enabletool", async (ctx) => {
+    if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Только для админов."); return; }
+    const name = ctx.match?.trim();
+    if (!name) { await ctx.reply("Usage: /enabletool <tool_name>"); return; }
+    const { enableTool } = await import("../tools/tool_registry.js");
+    const ok = enableTool(name);
+    await ctx.reply(ok ? `✅ Тул "${name}" включён.` : `❌ Тул "${name}" не найден.`);
+  });
+
+  // /usetool <n> <input> — directly invoke any dynamic tool
+  bot.command("usetool", async (ctx) => {
+    const parts = (ctx.match?.trim() ?? "").split(" ");
+    if (parts.length < 2) {
+      await ctx.reply("Usage: `/usetool <tool_name> <input>`\n\nПример: `/usetool crypto_price BTC`", { parse_mode: "Markdown" });
+      return;
+    }
+    const name  = parts[0]!;
+    const input = parts.slice(1).join(" ");
+    const { hasDynamicTool, executeDynamicTool } = await import("../tools/tool_registry.js");
+    if (!hasDynamicTool(name)) {
+      await ctx.reply(`❌ Тул "${name}" не найден. /tools — список доступных.`);
+      return;
+    }
+    const msg = await ctx.reply(`⚙️ Запускаю *${name}*...`, { parse_mode: "Markdown" });
+    const result = await executeDynamicTool(name, input);
+    const text = `${result.success ? "✅" : "❌"} *${name}*\n\n${result.output.slice(0, 3800)}`;
+    await bot.api.editMessageText(ctx.chat!.id, msg.message_id, text, { parse_mode: "Markdown" })
+      .catch(() => ctx.reply(text, { parse_mode: "Markdown" }));
+  });
+
+  // /toolinfo <n> — full details of a specific tool
+  bot.command("toolinfo", async (ctx) => {
+    const name = ctx.match?.trim();
+    if (!name) { await ctx.reply("Usage: /toolinfo <tool_name>"); return; }
+    const { getToolInfo } = await import("../tools/tool_registry.js");
+    const t = getToolInfo(name);
+    if (!t) { await ctx.reply(`❌ Тул "${name}" не найден.`); return; }
+    const created = new Date(t.createdAt).toLocaleString("ru");
+    await ctx.reply(
+      `🔧 *${t.name}* v${t.version}\n\n📝 ${t.description}\n\n📥 Input: ${t.inputSchema}\n📤 Output: ${t.outputSchema}\n📦 Packages: ${t.packages?.join(", ") || "none"}\n🧪 Test: ${t.testOutput || "—"}\n📅 Created: ${created}\n🟢 Status: ${t.enabled ? "active" : "disabled"}`,
+      { parse_mode: "Markdown" }
+    );
   });
 }

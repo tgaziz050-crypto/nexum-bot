@@ -1,6 +1,9 @@
 /**
  * NEXUM v5 — Telegram Message Handler
  * Full pipeline: voice → text → intent → tools → response
+ * - Photos: silent retry, no API key errors shown to users
+ * - Voice: multilingual auto-detect
+ * - Reactions: on message, not as text
  */
 import type { Bot, Context } from "grammy";
 import { InputFile } from "grammy";
@@ -48,7 +51,6 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
 
   await ctx.replyWithChatAction("typing");
 
-  // Intent detection
   const { intent } = detectIntent(userText);
 
   // Link code detection
@@ -56,11 +58,12 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
     const code = extractLinkCode(userText);
     if (code) {
       const ok = await consumeLinkCode(uid, code);
-      if (ok) {
-        await ctx.reply("✅ *Устройство успешно привязано!*\n\nPC Agent подключён к твоему аккаунту.", { parse_mode: "Markdown" });
-      } else {
-        await ctx.reply("❌ Неверный или просроченный код. Запусти агента заново и получи новый код.");
-      }
+      await ctx.reply(
+        ok
+          ? "✅ *Device linked!*\n\nPC Agent connected to your account. Use /pc to manage."
+          : "❌ Invalid or expired code. Restart the agent to get a new code.",
+        { parse_mode: "Markdown" }
+      );
       return;
     }
   }
@@ -70,6 +73,8 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
     /сегодня|сейчас|новости|последн|актуальн|курс\s+(?:валют|доллар|евро|USD|EUR)|погода|прогноз/i,
     /кто\s+(?:сейчас|является|президент|премьер)|что\s+(?:сейчас|происходит)/i,
     /today|right now|latest|current|breaking|news|weather forecast/i,
+    /bugun|hozir|yangilik|ob-havo/i, // Uzbek
+    /bugün|şimdi|haber|hava durumu/i, // Turkish
   ];
   const needsSearch = SEARCH_PATTERNS.some(p => p.test(userText)) || intent === "search";
   let searchCtx = "";
@@ -106,7 +111,7 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
       const alarm = parseAlarmTime(userText);
       if (alarm) {
         Db.addAlarm(uid, chatId, userText, alarm);
-        await ctx.reply(`🔔 Будильник установлен на ${alarm.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}`);
+        await ctx.reply(`🔔 Alarm set for ${alarm.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}`);
         return;
       }
     } catch {}
@@ -116,7 +121,7 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
   if (intent === "note" && ct === "private") {
     const noteResult = tryExtractNote(uid, userText);
     if (noteResult?.saved) {
-      await ctx.reply("📝 Заметка сохранена!");
+      await ctx.reply("📝 Note saved!");
       return;
     }
   }
@@ -125,23 +130,40 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
   if (intent === "task" && ct === "private") {
     const saved = await tryExtractAndSaveTask(uid, chatId, userText);
     if (saved) {
-      await ctx.reply("✅ Задача добавлена!");
+      await ctx.reply("✅ Task added!");
       return;
     }
   }
 
+  // Direct tool creation request
+  if (/создай.*(?:тул|инструмент|tool)|разработай.*тул|сделай.*тул|make.*tool|build.*tool|create.*tool/i.test(userText) && ct === "private") {
+    const { generateAndRegisterTool, listDynamicTools } = await import("../tools/tool_registry.js");
+    const msg = await ctx.reply("🔨 *Developing new tool...*\n\nGenerating code, please wait.", { parse_mode: "Markdown" });
+    const result = await generateAndRegisterTool(uid, userText);
+    const toolCount = listDynamicTools().length;
+    await bot.api.editMessageText(
+      chatId,
+      msg.message_id,
+      result.success
+        ? `✅ *New tool created and connected!*\n\n${result.message}\n\n🧰 Total dynamic tools: ${toolCount}\nUse /tools to see all.`
+        : `❌ *Tool creation failed*\n\n${result.message}`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
   // Complex task planning
   if (needsPlanning(userText) && ct === "private") {
-    await ctx.reply("🗺 Составляю план выполнения...");
+    await ctx.reply("🗺 Building execution plan...");
     const context = `User has PC agent: ${isAgentOnline(uid) ? "YES" : "NO"}`;
     const plan = await createPlan(uid, userText, context);
     if (plan) {
-      const planMsg = await ctx.reply(formatPlan(plan), { parse_mode: "Markdown" });
-      await ctx.reply("▶️ Начать выполнение плана?", {
+      await ctx.reply(formatPlan(plan), { parse_mode: "Markdown" });
+      await ctx.reply("▶️ Start executing this plan?", {
         reply_markup: {
           inline_keyboard: [[
-            { text: "✅ Выполнить", callback_data: `plan:run:${plan.id}` },
-            { text: "❌ Отмена",    callback_data: `plan:cancel:${plan.id}` },
+            { text: "✅ Execute", callback_data: `plan:run:${plan.id}` },
+            { text: "❌ Cancel",  callback_data: `plan:cancel:${plan.id}` },
           ]],
         },
       });
@@ -149,7 +171,6 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
     }
   }
 
-  // Build messages for AI
   const sys  = buildSystemPrompt(uid, chatId, ct, userText);
   const hist = Db.getHistory(uid, chatId, 50);
   const userContent = searchCtx ? `[WEB SEARCH]\n${searchCtx}\n---\n${userText}` : userText;
@@ -165,7 +186,6 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
   Db.addMsg(uid, chatId, "user", userText);
   Db.addMsg(uid, chatId, "assistant", resp);
 
-  // Voice mode reply
   const user = Db.getUser(uid);
   if (user?.voice_mode && ct === "private") {
     await ctx.replyWithChatAction("record_voice");
@@ -190,37 +210,36 @@ export function registerHandlers(bot: Bot<BotContext>) {
   // ── Plan execution callback ───────────────────────────────────────────
   bot.callbackQuery(/^plan:(run|cancel):(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const uid = ctx.from!.id;
-    const action  = ctx.match[1];
-    const planId  = parseInt(ctx.match[2]);
+    const uid    = ctx.from!.id;
+    const action = ctx.match[1];
+    const planId = parseInt(ctx.match[2]);
 
     if (action === "cancel") {
       const { DbV5 } = await import("../core/db.js");
       DbV5.updatePlanStatus(planId, "cancelled");
-      await ctx.editMessageText("❌ План отменён.");
+      await ctx.editMessageText("❌ Plan cancelled.");
       return;
     }
 
-    // Run plan
     const { DbV5 } = await import("../core/db.js");
     const plans = DbV5.getActivePlans(uid);
-    const plan = plans.find(p => p.id === planId);
-    if (!plan) { await ctx.editMessageText("❌ План не найден."); return; }
+    const plan  = plans.find(p => p.id === planId);
+    if (!plan) { await ctx.editMessageText("❌ Plan not found."); return; }
 
     const steps = JSON.parse(plan.steps);
-    await ctx.editMessageText("⚙️ Выполняю план...");
+    await ctx.editMessageText("⚙️ Executing plan...");
 
     const pcSend = isAgentOnline(uid) ? sendToAgent : undefined;
     const results = await executePlan(uid, planId, steps, pcSend, async (r) => {
       await bot.api.sendMessage(ctx.chat!.id,
-        `${r.success ? "✅" : "❌"} Шаг ${r.step.id}: ${r.step.action}\n${r.output ? `\`${r.output.slice(0, 200)}\`` : ""}`,
+        `${r.success ? "✅" : "❌"} Step ${r.step.id}: ${r.step.action}\n${r.output ? `\`${r.output.slice(0, 200)}\`` : ""}`,
         { parse_mode: "Markdown" }
       ).catch(() => {});
     });
 
     const done = results.filter(r => r.success).length;
     await bot.api.sendMessage(ctx.chat!.id,
-      `📊 *Plan complete:* ${done}/${results.length} шагов выполнено.`,
+      `📊 *Plan complete:* ${done}/${results.length} steps done.`,
       { parse_mode: "Markdown" }
     ).catch(() => {});
   });
@@ -229,11 +248,10 @@ export function registerHandlers(bot: Bot<BotContext>) {
   bot.callbackQuery(/^pc:(approve|deny):(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const action = ctx.match[1];
-    const reqId  = ctx.match[2];
     if (action === "approve") {
-      await ctx.editMessageText("✅ Команда выполняется...");
+      await ctx.editMessageText("✅ Command executing...");
     } else {
-      await ctx.editMessageText("❌ Команда отменена.");
+      await ctx.editMessageText("❌ Command cancelled.");
     }
   });
 
@@ -245,7 +263,6 @@ export function registerHandlers(bot: Bot<BotContext>) {
 
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
 
-
     if (ct !== "private") {
       const mentioned = await isMentionedOrReplied(ctx, (await ctx.me).username ?? "");
       if (!mentioned) return;
@@ -253,16 +270,29 @@ export function registerHandlers(bot: Bot<BotContext>) {
 
     if (!text.trim() || text.startsWith("/")) return;
 
-    try {
-      await smartReact(bot as any, ctx.chat!.id, ctx.message!.message_id, text);
-    } catch {}
+    // Set reaction on the user's message (async, don't block)
+    smartReact(bot as any, ctx.chat!.id, ctx.message!.message_id, text).catch(() => {});
+
+    // Agent file request detection (multilingual)
+    const agentRequest = /скачай агент|пришли агент|send agent|agent file|агент файл|agent install|установить агент|yubor agent|agent yuklab/i.test(text);
+    if (agentRequest && ct === "private") {
+      try {
+        const agentPath = path.join(process.cwd(), "nexum_agent.py");
+        if (fs.existsSync(agentPath)) {
+          await ctx.replyWithDocument(new InputFile(agentPath, "nexum_agent.py"),
+            { caption: "🤖 *NEXUM PC Agent*\n\n1. Install Python 3.8+\n2. `pip install websockets pyautogui pillow psutil`\n3. `python nexum_agent.py`\n4. Send the 6-char code with `/link CODE`", parse_mode: "Markdown" }
+          );
+          return;
+        }
+      } catch {}
+    }
 
     try {
       const taskType = /```|код|функция|function|code|class|script/i.test(text) ? "code" : "general";
       await aiRespond(ctx, text, taskType as any);
     } catch (e: any) {
       log.error(`Handler text error: ${e.message}`);
-      await ctx.reply("😕 Что-то пошло не так. Попробуй ещё раз.");
+      await ctx.reply("😕 Something went wrong. Please try again.");
     }
   });
 
@@ -271,7 +301,6 @@ export function registerHandlers(bot: Bot<BotContext>) {
     const uid = ctx.from!.id;
     const ct  = ctx.chat!.type as ChatType;
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
-
 
     if (ct !== "private") {
       const mentioned = await isMentionedOrReplied(ctx, (await ctx.me).username ?? "");
@@ -291,15 +320,16 @@ export function registerHandlers(bot: Bot<BotContext>) {
       fs.unlinkSync(tmp);
 
       if (!transcript) {
-        await ctx.reply("🎙 Не смог распознать голос. Попробуй ещё раз.");
+        // Retry once with a different message
+        await ctx.reply("🎙 Could not recognize. Please try speaking clearly.");
         return;
       }
 
-      await ctx.reply(`🎙 *Распознано:* _${transcript}_`, { parse_mode: "Markdown" });
+      await ctx.reply(`🎙 *Heard:* _${transcript}_`, { parse_mode: "Markdown" });
       await aiRespond(ctx, transcript);
     } catch (e: any) {
       log.error(`Voice handler: ${e.message}`);
-      await ctx.reply("😕 Ошибка обработки голоса.");
+      await ctx.reply("😕 Voice processing error. Try again.");
     }
   });
 
@@ -323,11 +353,11 @@ export function registerHandlers(bot: Bot<BotContext>) {
       fs.unlinkSync(tmp);
 
       if (!transcript) {
-        await ctx.reply("🎥 Не смог распознать речь в кружке. Попробуй голосовым сообщением.");
+        await ctx.reply("🎥 Couldn't transcribe the video. Try sending a voice message.");
         return;
       }
 
-      await ctx.reply(`🎥 *Кружок:* _${transcript}_`, { parse_mode: "Markdown" });
+      await ctx.reply(`🎥 *Video note:* _${transcript}_`, { parse_mode: "Markdown" });
       await aiRespond(ctx, transcript);
     } catch (e: any) {
       log.error(`Video note: ${e.message}`);
@@ -350,10 +380,19 @@ export function registerHandlers(bot: Bot<BotContext>) {
       const res    = await fetch(url);
       const buf    = Buffer.from(await res.arrayBuffer());
       const b64    = buf.toString("base64");
-      const caption = ctx.message.caption ?? "Что на этом изображении?";
+      const caption = ctx.message.caption ?? "What's in this image?";
 
-      const analysis = await vision(b64, caption);
-      const sys = buildSystemPrompt(uid, ctx.chat!.id, ct, caption);
+      let analysis = "";
+      try {
+        analysis = await vision(b64, caption);
+      } catch (e: any) {
+        // Internal error — log it but don't expose API details to user
+        log.error(`Vision error: ${e.message}`);
+        // Try to still respond using just the caption
+        analysis = "[Image provided by user]";
+      }
+
+      const sys  = buildSystemPrompt(uid, ctx.chat!.id, ct, caption);
       const hist = Db.getHistory(uid, ctx.chat!.id, 20);
       const msgs = [
         { role: "system" as const, content: sys },
@@ -367,7 +406,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
       await send(ctx, resp);
     } catch (e: any) {
       log.error(`Photo handler: ${e.message}`);
-      await ctx.reply("👁 Не смог проанализировать изображение. Проверь API ключи (G1 или OR1).");
+      await ctx.reply("👁 Couldn't analyze the image. Please try again.");
     }
   });
 
@@ -375,8 +414,19 @@ export function registerHandlers(bot: Bot<BotContext>) {
   bot.on("message:sticker", async (ctx) => {
     const ct = ctx.chat!.type;
     if (ct !== "private") return;
-    const emojis = ["👍", "🔥", "❤️", "😎", "✨"];
+    const emojis = ["👍", "🔥", "❤️", "😎", "✨", "🤩", "💯"];
     const pick = emojis[Math.floor(Math.random() * emojis.length)];
-    await ctx.reply(pick!).catch(() => {});
+    // Set reaction on sticker instead of replying with text
+    try {
+      await (bot.api as any).setMessageReaction({
+        chat_id: ctx.chat!.id,
+        message_id: ctx.message!.message_id,
+        reaction: [{ type: "emoji", emoji: pick }],
+        is_big: false,
+      });
+    } catch {
+      // Fallback to reply if reaction fails
+      await ctx.reply(pick!).catch(() => {});
+    }
   });
 }

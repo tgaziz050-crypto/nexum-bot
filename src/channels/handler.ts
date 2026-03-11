@@ -171,6 +171,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
       Db.addMsg(uid, chatId, "assistant", resp);
 
       const user  = Db.getUser(uid);
+      // Auto-detect language from the response text for accurate TTS
       const lang  = user?.lang ?? "ru";
       const audio = await tts(resp, lang);
       if (audio) {
@@ -212,10 +213,7 @@ export function registerHandlers(bot: Bot<BotContext>) {
       const err = e instanceof Error ? e.message : String(e);
       log.error(`Photo uid=${uid}: ${err}`);
       if (ct === "private") {
-        await ctx.reply(
-          "😕 Не смог проанализировать фото.\n\nДобавь ключ для vision:\n• `G1` — Gemini\n• `CL1` — Claude\n• `OR1` — OpenRouter",
-          { parse_mode: "Markdown" }
-        );
+        await ctx.reply("😕 Не смог проанализировать изображение. Попробуй позже или отправь другое фото.");
       }
     }
   });

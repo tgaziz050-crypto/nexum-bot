@@ -8,16 +8,22 @@ export function registerNodeCommands(bot: Bot<BotContext>) {
   bot.command(["node_connect", "pc_connect"], async (ctx) => {
     const uid = ctx.from!.id;
     await ctx.reply(
-      `💻 *Подключение PC Агента*\n\n` +
-      `**1. Скачай агент** (из архива проекта): \`nexum_agent.py\`\n\n` +
-      `**2. Установи зависимости:**\n\`\`\`\npip install websockets pyautogui pillow psutil\n\`\`\`\n\n` +
-      `**3. Задай переменные:**\n\`\`\`\nNEXUM_WS_URL=ws://твой-сервер:18790\nNEXUM_OWNER_ID=${uid}\nNEXUM_MODE=SAFE\n\`\`\`\n\n` +
-      `**4. Автозапуск Windows:**\n` +
-      `Отредактируй \`install_windows.bat\` и запусти от администратора\n\n` +
-      `**5. Автозапуск Linux/Mac:**\n\`\`\`\nsudo python nexum_agent.py --install-service\n\`\`\`\n\n` +
-      `После запуска агент пришлёт уведомление сюда.\n\n` +
+      `💻 *PC Агент — Управление компьютером*\n\n` +
+      `Агент даёт NEXUM доступ к твоему ПК прямо из Telegram.\n\n` +
+      `*Установка:*\n\n` +
+      `**1.** Нажми кнопку ниже — скачай агента\n\n` +
+      `**2.** Установи зависимости:\n\`\`\`\npip install websockets pyautogui pillow psutil apscheduler requests\n\`\`\`\n\n` +
+      `**3.** Запусти:\n\`\`\`\npython nexum_agent.py   # Windows\npython3 nexum_agent.py  # Mac/Linux\n\`\`\`\n\n` +
+      `**4.** Агент пришлёт сюда уведомление о подключении ✅\n\n` +
       `🆔 Твой ID: \`${uid}\``,
-      { parse_mode: "Markdown" }
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "📥 Скачать агента", callback_data: "download_agent" }
+          ]]
+        }
+      }
     );
   });
 

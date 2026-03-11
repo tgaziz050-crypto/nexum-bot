@@ -13,16 +13,6 @@ import { log } from "../core/logger.js";
 
 function isAdmin(uid: number) { return Config.ADMIN_IDS.includes(uid); }
 
-function getKeyboard(uid: number) {
-  const rows: any[] = [
-    [{ text: "💰 Finance" }, { text: "📊 Статус" }],
-    [{ text: "🧠 Память" }, { text: "⏰ Напоминания" }],
-    [{ text: "💻 PC Агент" }, { text: "❓ Помощь" }],
-  ];
-  if (isAdmin(uid)) rows.push([{ text: "⚙️ Админ" }]);
-  return { keyboard: rows, resize_keyboard: true };
-}
-
 function getMiniAppBtns(uid: number) {
   if (!Config.WEBAPP_URL) return null;
   const token = generateWebAppToken(uid);
@@ -50,38 +40,133 @@ function getFinanceBtn(uid: number) {
   return null;
 }
 
+// ── Set bot menu button to open mini-app hub ─────────────────────────────────
+async function setupMenuButton(bot: Bot<BotContext>) {
+  if (!Config.WEBAPP_URL) return;
+  try {
+    await (bot.api as any).setChatMenuButton({
+      menu_button: {
+        type: "web_app",
+        text: "📱 NEXUM Apps",
+        web_app: { url: `${Config.WEBAPP_URL}/hub` },
+      },
+    });
+    log.info("Menu button set to NEXUM Hub");
+  } catch (e: any) {
+    log.debug(`Menu button setup: ${e.message}`);
+  }
+}
+
 export function registerCommands(bot: Bot<BotContext>) {
+
+  // Setup menu button once on startup
+  setTimeout(() => setupMenuButton(bot), 3000);
 
   bot.command("start", async (ctx) => {
     const uid  = ctx.from!.id;
     const name = ctx.from!.first_name ?? "";
     Db.ensureUser(uid, name, ctx.from!.username ?? "");
     Db.finEnsureDefaults(uid);
-    const kb = getMiniAppBtns(uid);
+
+    // Remove any old reply keyboard
     await ctx.reply(
-      `👋 Привет${name ? `, ${name}` : ""}! Я **NEXUM**.\n\n` +
-      `🧠 Помню всё о тебе\n🌐 Ищу в интернете\n🎤 Понимаю голос\n👁 Анализирую фото\n` +
-      `💰 Веду твои финансы\n📝 Заметки · ✅ Задачи · 🎯 Привычки\n⏰ Напоминания · 💻 PC Агент\n\n` +
-      `Просто пиши — я всё понимаю!`,
-      { parse_mode: "Markdown", reply_markup: getKeyboard(uid) }
+      `👋 Привет${name ? `, ${name}` : ""}! Я **NEXUM** — твой персональный ИИ.\n\n` +
+      `🧠 Помню всё о тебе\n🌐 Ищу в интернете\n🎤 Понимаю голос и кружки\n👁 Анализирую фото\n` +
+      `💰 Веду финансы · 📝 Заметки\n✅ Задачи · 🎯 Привычки\n⏰ Напоминания · 💻 PC Агент\n\n` +
+      `Просто пиши — я всё понимаю!\n\n` +
+      `📱 Все приложения — кнопка *Apps* внизу слева`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: { remove_keyboard: true },
+      }
     );
-    if (kb) {
-      await ctx.reply("📱 *Мини-приложения NEXUM:*", { parse_mode: "Markdown", reply_markup: kb });
+
+    // Show mini-apps inline if WEBAPP_URL set
+    if (Config.WEBAPP_URL) {
+      const token = generateWebAppToken(uid);
+      const q = `?uid=${uid}&token=${token}`;
+      const base = Config.WEBAPP_URL;
+      await ctx.reply(
+        `📱 *Мини-приложения NEXUM:*`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "💰 Finance", web_app: { url: base + q } },
+                { text: "📝 Notes",   web_app: { url: base + "/notes" + q } },
+              ],
+              [
+                { text: "✅ Tasks",  web_app: { url: base + "/tasks" + q } },
+                { text: "🎯 Habits", web_app: { url: base + "/habits" + q } },
+              ],
+            ],
+          },
+        }
+      );
     }
   });
 
-  bot.command("help", async (ctx) => {
+  // /apps — open mini-app hub
+  bot.command("apps", async (ctx) => {
+    const uid = ctx.from!.id;
+    Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
+    if (!Config.WEBAPP_URL) {
+      await ctx.reply("⚙️ WEBAPP_URL не настроен. Добавь переменную в Railway.");
+      return;
+    }
+    const token = generateWebAppToken(uid);
+    const q = `?uid=${uid}&token=${token}`;
+    const base = Config.WEBAPP_URL;
     await ctx.reply(
-      `📖 **NEXUM — Команды:**\n\n` +
-      `**Основные:**\n` +
-      `/start — старт\n/new — новая сессия\n/memory — память\n/forget — очистить\n` +
-      `/status — статус\n/id — твой ID\n/brief — дайджест дня\n\n` +
-      `**Финансы:**\n` +
-      `/finance — обзор финансов\n/history — история транзакций\n/accounts — счета\n/budgets — бюджеты\n/finai — AI анализ\n/spent — расходы\n/income — доходы\n\n` +
-      `**Инструменты:**\n` +
-      `/search — поиск в сети\n/remind — напоминание\n/reminders — список\n\n` +
-      `**PC Агент:**\n` +
-      `/node_connect — подключить ПК\n/screenshot — скриншот\n/run — команда\n/sysinfo — инфо`,
+      `📱 *NEXUM Apps*\n\nВыбери приложение:`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "💰 Finance", web_app: { url: base + q } },
+              { text: "📝 Notes",   web_app: { url: base + "/notes" + q } },
+            ],
+            [
+              { text: "✅ Tasks",  web_app: { url: base + "/tasks" + q } },
+              { text: "🎯 Habits", web_app: { url: base + "/habits" + q } },
+            ],
+          ],
+        },
+      }
+    );
+  });
+
+  bot.command("help", async (ctx) => {
+    const uid = ctx.from!.id;
+    const hasApps = !!Config.WEBAPP_URL;
+    await ctx.reply(
+      `📖 *NEXUM — Команды:*\n\n` +
+      `*Основные:*\n` +
+      `/start — приветствие\n` +
+      `/apps — все мини-приложения\n` +
+      `/new — новая беседа\n` +
+      `/memory — моя память\n` +
+      `/forget — очистить память\n` +
+      `/status — мой статус\n` +
+      `/brief — дайджест дня\n\n` +
+      `*Финансы:*\n` +
+      `/finance — обзор · /history — история\n` +
+      `/accounts — счета · /budgets — бюджеты\n` +
+      `/finai — AI анализ · /spent — расходы\n\n` +
+      `*Задачи и заметки:*\n` +
+      `/tasks — задачи · /task текст — добавить\n` +
+      `/notes — заметки · /note текст — добавить\n` +
+      `/habits — привычки\n\n` +
+      `*Инструменты:*\n` +
+      `/remind текст — напоминание\n` +
+      `/reminders — список напоминаний\n` +
+      `/search запрос — поиск\n\n` +
+      `*PC Агент:*\n` +
+      `/node_connect — подключить ПК\n` +
+      `/screenshot — скриншот · /run — команда\n` +
+      `/sysinfo — инфо о системе`,
       { parse_mode: "Markdown" }
     );
   });
@@ -93,18 +178,6 @@ export function registerCommands(bot: Bot<BotContext>) {
 
   // ── FINANCE ──────────────────────────────────────────────────────────
   bot.command("finance", async (ctx) => {
-    const uid = ctx.from!.id;
-    Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
-    Db.finEnsureDefaults(uid);
-    const kb = getFinanceBtn(uid);
-    if (kb) {
-      await ctx.reply("💼 *NEXUM Finance*\n\nОткрой приложение:", { parse_mode: "Markdown", reply_markup: kb });
-    } else {
-      await sendFinanceDashboard(bot, ctx.chat!.id, uid);
-    }
-  });
-
-  bot.hears("💰 Finance", async (ctx) => {
     const uid = ctx.from!.id;
     Db.ensureUser(uid, ctx.from!.first_name ?? "", ctx.from!.username ?? "");
     Db.finEnsureDefaults(uid);
@@ -206,13 +279,6 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply(text, { parse_mode: "Markdown" });
   });
 
-  bot.hears("🧠 Память", async (ctx) => {
-    const uid = ctx.from!.id;
-    const mems = Db.getMemories(uid);
-    if (!mems.length) { await ctx.reply("🧠 Память пуста."); return; }
-    await ctx.reply(mems.slice(0,15).map(m=>`• ${m.value}`).join("\n"));
-  });
-
   bot.command(["forget", "clear_memory"], async (ctx) => {
     const uid = ctx.from!.id;
     Db.clearMemories(uid); Db.clearLongMem(uid);
@@ -242,29 +308,6 @@ export function registerCommands(bot: Bot<BotContext>) {
     await ctx.reply(text, { parse_mode: "Markdown" });
   });
 
-  bot.hears("📊 Статус", async (ctx) => {
-    ctx.message = ctx.message;
-    const uid  = ctx.from!.id;
-    const user = Db.getUser(uid);
-    const rems = Db.getUserReminders(uid);
-    const mems = Db.getMemories(uid);
-    const accs = Db.finGetAccounts(uid);
-    const bal  = accs.reduce((s, a) => s + a.balance, 0);
-    let text = `📊 *Status*\n👤 ${user?.name || "—"} · ${user?.total_msgs || 0} msg\n`;
-    text += `🧠 ${mems.length} фактов · ⏰ ${rems.length} напоминаний\n`;
-    text += `💰 ${Math.round(bal).toLocaleString("ru-RU")} UZS`;
-    await ctx.reply(text, { parse_mode: "Markdown" });
-  });
-  bot.hears("⚙️ Админ", async (ctx) => {
-    const uid = ctx.from!.id;
-    if (!isAdmin(uid)) { await ctx.reply("❌"); return; }
-    const stats = Db.getStats();
-    const top   = Db.getTopUsers().slice(0, 5);
-    let text = `⚙️ *Admin Panel*\n\n👥 Юзеров: ${stats.users}\n💬 Сообщений: ${stats.messages}\n\n*Топ:*\n`;
-    text += top.map(u => `• ${u.name || u.username || u.uid}: ${u.total_msgs} msg`).join("\n");
-    await ctx.reply(text, { parse_mode: "Markdown" });
-  });
-
   // ── REMINDERS ────────────────────────────────────────────────────────
   bot.command("remind", async (ctx) => {
     const uid    = ctx.from!.id;
@@ -287,12 +330,6 @@ export function registerCommands(bot: Bot<BotContext>) {
       return `⏰ ${r.text} — _${t}_`;
     }).join("\n");
     await ctx.reply(lines, { parse_mode:"Markdown", reply_markup:kb });
-  });
-
-  bot.hears("⏰ Напоминания", async (ctx) => {
-    const rems = Db.getUserReminders(ctx.from!.id);
-    if (!rems.length) { await ctx.reply("Нет активных напоминаний."); return; }
-    await ctx.reply(rems.map(r=>{ const t=new Date(r.fire_at).toLocaleString("ru",{dateStyle:"short",timeStyle:"short"}); return `⏰ ${r.text} — ${t}`; }).join("\n"));
   });
 
   // ── SEARCH ───────────────────────────────────────────────────────────
@@ -380,22 +417,6 @@ export function registerCommands(bot: Bot<BotContext>) {
   });
 
   bot.command("id", async (ctx) => { await ctx.reply(`🆔 \`${ctx.from!.id}\``, { parse_mode: "Markdown" }); });
-
-  bot.hears("❓ Помощь", async (ctx) => {
-    await ctx.reply(
-      `📖 *NEXUM — Полный список:*\n\n` +
-      `*Основные:*\n/start /new /memory /forget /status /brief\n\n` +
-      `*Финансы:*\n/finance /history /accounts /budgets /finai /spent\n\n` +
-      `*Задачи:* /tasks /task\n` +
-      `*Заметки:* /notes /note /nsearch\n` +
-      `*Привычки:* /habits /habit\n` +
-      `*Напоминания:* /remind /reminders\n` +
-      `*Будильник:* "разбуди в 7:00" или "будильник в 8:30"\n\n` +
-      `*Инструменты:*\n/search /id\n\n` +
-      `*PC Агент:*\n/node_connect /screenshot /run /sysinfo`,
-      { parse_mode: "Markdown" }
-    );
-  });
 
   // ── UNIFIED CALLBACK QUERY HANDLER ─────────────────────────────────
   bot.on("callback_query:data", async (ctx) => {

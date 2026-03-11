@@ -32,6 +32,7 @@ export function startWebAppServer(port: number) {
   // ── Static files ──────────────────────────────────────────────
   const webDir = __dirname;
   app.get("/", (_req, res) => serveFile(res, path.join(webDir, "index.html")));
+  app.get("/hub", (_req, res) => serveFile(res, path.join(webDir, "hub.html")));
   app.get("/notes", (_req, res) => serveFile(res, path.join(webDir, "notes.html")));
   app.get("/tasks", (_req, res) => serveFile(res, path.join(webDir, "tasks.html")));
   app.get("/habits", (_req, res) => serveFile(res, path.join(webDir, "habits.html")));
@@ -72,7 +73,15 @@ export function startWebAppServer(port: number) {
           for (const item of data) { if (map[item.Ccy]) rates[map[item.Ccy]!] = parseFloat(item.Rate); }
         }
       } catch {}
-      res.json({ accounts, income, expense, txs, categoryBreakdown, budgets, rates });
+      const user = Db.getUser(uid);
+      const habits = Db.getHabits(uid);
+      const today = new Date().toISOString().slice(0, 10);
+      const todayDone = habits.filter((h: any) => Db.getHabitLog(h.id, today)).length;
+      res.json({ accounts, income, expense, txs, categoryBreakdown, budgets, rates,
+        userName: user?.name || '',
+        totalMsgs: user?.total_msgs || 0,
+        todayHabits: habits.length,
+        todayDone });
     } catch(e: any) { res.status(500).json({ error: e.message }); }
   });
 

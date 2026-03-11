@@ -7,7 +7,7 @@
  * 3. Гарантирует что ctx.from.id всегда присутствует
  */
 
-import type { BotContext } from "../channels/bot.js";
+import type { BotContext } from "../telegram/bot.js";
 import { Config } from "./config.js";
 import { Db } from "./db.js";
 import { log } from "./logger.js";

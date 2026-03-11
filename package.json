@@ -1,7 +1,7 @@
 {
   "name": "nexum",
-  "version": "1.0.0",
-  "description": "NEXUM v1 \u2014 Multi-user AI platform for Telegram",
+  "version": "5.0.0",
+  "description": "NEXUM v5 — Autonomous AI Agent Platform for Telegram",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { Db } from "../core/db.js";
-import { ask } from "../ai/engine.js";
+import { ask } from "../agent/engine.js";
 import { log } from "../core/logger.js";
 import { sendHabitReminders } from "../tools/habits.js";
 import { runSelfImprovement } from "../core/self_improve.js";

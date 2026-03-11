@@ -1,4 +1,4 @@
-import { ask } from "../ai/engine.js";
+import { ask } from "../agent/engine.js";
 import { log } from "../core/logger.js";
 
 async function translateToEn(text: string): Promise<string> {

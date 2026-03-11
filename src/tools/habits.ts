@@ -3,9 +3,9 @@
  * Трекер привычек: стрики, статистика, AI-анализ
  */
 import type { Bot } from "grammy";
-import type { BotContext } from "../channels/bot.js";
+import type { BotContext } from "../telegram/bot.js";
 import { Db } from "../core/db.js";
-import { ask } from "../ai/engine.js";
+import { ask } from "../agent/engine.js";
 import { log } from "../core/logger.js";
 
 function streak(n: number): string {

@@ -1,7 +1,10 @@
-FROM node:22-alpine
+FROM node:20-slim
 
-RUN apk add --no-cache python3 py3-pip make g++ ffmpeg \
- && pip3 install edge-tts --break-system-packages
+# Install system deps for voice processing
+RUN apt-get update && apt-get install -y \
+    ffmpeg python3 python3-pip \
+    && pip3 install edge-tts --break-system-packages \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -11,11 +14,6 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-# Copy webapp HTML to dist
-RUN mkdir -p dist/webapp && cp src/webapp/index.html dist/webapp/index.html
-
-RUN npm prune --omit=dev
-
-ENV NODE_ENV=production
+EXPOSE 3000 18790
 
 CMD ["node", "dist/index.js"]

@@ -1,5 +1,5 @@
 import { Bot } from "grammy";
-import { ask } from "./engine.js";
+import { ask } from "../agent/engine.js";
 import { log } from "../core/logger.js";
 
 // All 70+ Telegram reactions available

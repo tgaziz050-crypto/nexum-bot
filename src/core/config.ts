@@ -19,10 +19,11 @@ export const Config = {
   PUBLIC_BOT:  env("PUBLIC_BOT", "true") === "true",
   NODE_PORT:   parseInt(env("NODE_PORT", "18790")),
   WEBAPP_PORT: parseInt(env("WEBAPP_PORT", "3000")),
-  WEBAPP_URL:  env("WEBAPP_URL", ""),   // e.g. https://nexum-bot-production.up.railway.app
+  WEBAPP_URL:  env("WEBAPP_URL", ""),
   LOG_LEVEL:   env("LOG_LEVEL", "info"),
+  VERSION:     "5.0.0",
 
-  // AI ключи — все хранятся на Railway, в коде не появляются
+  // AI Keys — stored in Railway, never in code
   CEREBRAS_KEYS:   envList("CB"),
   GROQ_KEYS:       envList("GR"),
   GEMINI_KEYS:     envList("G"),
@@ -37,7 +38,6 @@ export const Config = {
   BRAVE_KEYS:  envList("BRAVE_KEY"),
 } as const;
 
-// ── Валидация при старте ──────────────────────────────────────────────────
 if (!Config.BOT_TOKEN) {
   console.error("❌ BOT_TOKEN не задан. Добавь в Railway → Variables.");
   process.exit(1);
@@ -56,10 +56,9 @@ if (totalKeys === 0) {
 }
 
 console.log(
-  `✅ NEXUM v1 | ` +
+  `✅ NEXUM v${Config.VERSION} | ` +
   `CB×${Config.CEREBRAS_KEYS.length} GR×${Config.GROQ_KEYS.length} ` +
   `G×${Config.GEMINI_KEYS.length} GK×${Config.GROK_KEYS.length} ` +
-  `SN×${Config.SAMBANOVA_KEYS.length} TO×${Config.TOGETHER_KEYS.length} ` +
   `OR×${Config.OPENROUTER_KEYS.length} DS×${Config.DEEPSEEK_KEYS.length} ` +
   `CL×${Config.CLAUDE_KEYS.length} | ` +
   `PUBLIC=${Config.PUBLIC_BOT} ADMINS=${Config.ADMIN_IDS.length}`

@@ -1,10 +1,14 @@
+/**
+ * NEXUM v5 — AI Engine
+ * Multi-provider fallback chain for all task types
+ */
 import { log } from "../core/logger.js";
 import { Config } from "../core/config.js";
-import * as P from "./providers.js";
-import type { Msg } from "./providers.js";
+import * as P from "../providers.js";
+import type { Msg } from "../providers.js";
 
 export type { Msg };
-export type Task = "general" | "code" | "analysis" | "creative" | "fast";
+export type Task = "general" | "code" | "analysis" | "creative" | "fast" | "plan";
 
 type ProviderFn = (msgs: Msg[]) => Promise<string>;
 
@@ -31,7 +35,7 @@ function buildChain(task: Task): ProviderFn[] {
     return chain;
   }
 
-  if (task === "analysis" || task === "creative") {
+  if (task === "plan" || task === "analysis") {
     if (Config.GEMINI_KEYS.length)     chain.push(m => P.gemini(m, "gemini-2.5-pro-preview-05-06"));
     if (Config.GEMINI_KEYS.length)     chain.push(m => P.gemini(m, "gemini-2.0-flash"));
     if (Config.GROK_KEYS.length)       chain.push(m => P.grok(m, "grok-3-mini"));
@@ -42,7 +46,17 @@ function buildChain(task: Task): ProviderFn[] {
     return chain;
   }
 
-  // general — бесплатные по приоритету скорость+ум
+  if (task === "creative") {
+    if (Config.GEMINI_KEYS.length)     chain.push(m => P.gemini(m, "gemini-2.5-pro-preview-05-06"));
+    if (Config.GEMINI_KEYS.length)     chain.push(m => P.gemini(m, "gemini-2.0-flash"));
+    if (Config.GROK_KEYS.length)       chain.push(m => P.grok(m));
+    if (Config.CLAUDE_KEYS.length)     chain.push(m => P.claude(m));
+    if (Config.CEREBRAS_KEYS.length)   chain.push(m => P.cerebras(m));
+    if (Config.GROQ_KEYS.length)       chain.push(m => P.groq(m));
+    return chain;
+  }
+
+  // general
   if (Config.CEREBRAS_KEYS.length)    chain.push(m => P.cerebras(m));
   if (Config.GROQ_KEYS.length)        chain.push(m => P.groq(m));
   if (Config.GEMINI_KEYS.length)      chain.push(m => P.gemini(m, "gemini-2.0-flash"));
@@ -64,7 +78,9 @@ export async function ask(msgs: Msg[], task: Task = "general"): Promise<string> 
       if (text?.trim()) return text.trim();
     } catch (e: unknown) {
       const err = e instanceof Error ? e.message : String(e);
-      if (!err.includes("429") && !err.includes("quota") && !err.includes("rate")) log.debug(`Provider failed: ${err}`);
+      if (!err.includes("429") && !err.includes("quota") && !err.includes("rate")) {
+        log.debug(`Provider failed: ${err}`);
+      }
     }
   }
   throw new Error("Все AI провайдеры недоступны. Проверь ключи в Railway Variables.");
@@ -77,9 +93,11 @@ export async function vision(b64: string, prompt: string): Promise<string> {
   if (Config.CLAUDE_KEYS.length)     tasks.push(P.claudeVision(b64, prompt));
   if (!tasks.length) throw new Error("Нет vision провайдеров. Добавь G1 или OR1.");
   return new Promise((resolve, reject) => {
-    let settled = 0; const errs: string[] = [];
+    let settled = 0;
+    const errs: string[] = [];
     for (const t of tasks) {
-      t.then(text => { if (text?.trim()) resolve(text.trim()); else check(); }).catch(e => { errs.push(String(e)); check(); });
+      t.then(text => { if (text?.trim()) resolve(text.trim()); else check(); })
+       .catch(e => { errs.push(String(e)); check(); });
     }
     function check() { if (++settled === tasks.length) reject(new Error(`Vision failed: ${errs.join(", ")}`)); }
   });

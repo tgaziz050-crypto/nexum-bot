@@ -3,7 +3,7 @@
  * AI анализирует ошибки и предлагает улучшения администратору
  */
 import { Db } from "../core/db.js";
-import { ask } from "../ai/engine.js";
+import { ask } from "../agent/engine.js";
 import { Config } from "./config.js";
 import { log } from "./logger.js";
 

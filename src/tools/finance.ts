@@ -2,8 +2,8 @@
  * NEXUM Finance App — текстовый режим без инлайн кнопок
  */
 import { Db } from "../core/db.js";
-import { ask } from "../ai/engine.js";
-import { buildSystemPrompt } from "../memory/prompt.js";
+import { ask } from "../agent/engine.js";
+import { buildSystemPrompt } from "../agent/memory.js";
 import { log } from "../core/logger.js";
 
 function fmt(n: number, cur = "UZS"): string {

@@ -3,10 +3,10 @@
  * Заметки с тегами, поиском и AI-суммаризацией
  */
 import type { Bot } from "grammy";
-import type { BotContext } from "../channels/bot.js";
+import type { BotContext } from "../telegram/bot.js";
 import { Db } from "../core/db.js";
-import { ask } from "../ai/engine.js";
-import { send } from "../channels/send.js";
+import { ask } from "../agent/engine.js";
+import { send } from "../telegram/send.js";
 import { log } from "../core/logger.js";
 
 export function isNoteRequest(text: string): boolean {

@@ -578,3 +578,106 @@ export const Db = {
 
 log.info(`DB ready: ${Config.DB_PATH}`);
 export default db;
+
+// ── PATCH: Run new schema additions ────────────────────────────────────────
+// These are added by NEXUM v5 migration
+try {
+  db.exec(`
+    -- PC Agent linking codes (secure pairing)
+    CREATE TABLE IF NOT EXISTS linking_codes (
+      code       TEXT PRIMARY KEY,
+      device_id  TEXT NOT NULL,
+      platform   TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      used       INTEGER DEFAULT 0
+    );
+
+    -- Linked devices (uid ↔ device_id)
+    CREATE TABLE IF NOT EXISTS linked_devices (
+      uid        INTEGER NOT NULL,
+      device_id  TEXT    NOT NULL,
+      device_name TEXT   DEFAULT 'PC',
+      platform   TEXT    DEFAULT '',
+      last_seen  TEXT    DEFAULT (datetime('now')),
+      active     INTEGER DEFAULT 1,
+      PRIMARY KEY(uid, device_id)
+    );
+
+    -- Agent task plans (planner output)
+    CREATE TABLE IF NOT EXISTS agent_plans (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      uid        INTEGER NOT NULL,
+      goal       TEXT    NOT NULL,
+      steps      TEXT    NOT NULL,  -- JSON array of steps
+      status     TEXT    DEFAULT 'pending',
+      created_at TEXT    DEFAULT (datetime('now')),
+      updated_at TEXT    DEFAULT (datetime('now'))
+    );
+
+    -- Agent execution log
+    CREATE TABLE IF NOT EXISTS agent_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      uid        INTEGER NOT NULL,
+      plan_id    INTEGER,
+      tool       TEXT    NOT NULL,
+      input      TEXT    DEFAULT '',
+      output     TEXT    DEFAULT '',
+      status     TEXT    DEFAULT 'ok',
+      ts         TEXT    DEFAULT (datetime('now'))
+    );
+  `);
+} catch {}
+
+// ── NEXUM v5 DB extensions ──────────────────────────────────────────────────
+
+export const DbV5 = {
+  // Linking codes
+  createLinkingCode(code: string, deviceId: string, platform: string) {
+    const expires = new Date(Date.now() + 10 * 60_000).toISOString(); // 10 min
+    db.prepare(`INSERT OR REPLACE INTO linking_codes(code,device_id,platform,expires_at) VALUES(?,?,?,?)`)
+      .run(code, deviceId, platform, expires);
+  },
+
+  consumeLinkingCode(code: string): { deviceId: string; platform: string } | null {
+    const row = db.prepare(
+      `SELECT device_id, platform FROM linking_codes WHERE code=? AND used=0 AND expires_at > datetime('now')`
+    ).get(code) as any;
+    if (!row) return null;
+    db.prepare(`UPDATE linking_codes SET used=1 WHERE code=?`).run(code);
+    return { deviceId: row.device_id, platform: row.platform };
+  },
+
+  linkDevice(uid: number, deviceId: string, deviceName: string, platform: string) {
+    db.prepare(
+      `INSERT OR REPLACE INTO linked_devices(uid,device_id,device_name,platform,last_seen,active) VALUES(?,?,?,?,datetime('now'),1)`
+    ).run(uid, deviceId, deviceName, platform);
+  },
+
+  getLinkedDevices(uid: number): any[] {
+    return db.prepare(`SELECT * FROM linked_devices WHERE uid=? AND active=1 ORDER BY last_seen DESC`).all(uid) as any[];
+  },
+
+  updateDeviceSeen(uid: number, deviceId: string) {
+    db.prepare(`UPDATE linked_devices SET last_seen=datetime('now') WHERE uid=? AND device_id=?`).run(uid, deviceId);
+  },
+
+  // Agent plans
+  createPlan(uid: number, goal: string, steps: any[]): number {
+    const r = db.prepare(`INSERT INTO agent_plans(uid,goal,steps) VALUES(?,?,?)`).run(uid, goal, JSON.stringify(steps));
+    return r.lastInsertRowid as number;
+  },
+
+  updatePlanStatus(planId: number, status: string) {
+    db.prepare(`UPDATE agent_plans SET status=?,updated_at=datetime('now') WHERE id=?`).run(status, planId);
+  },
+
+  getActivePlans(uid: number): any[] {
+    return db.prepare(`SELECT * FROM agent_plans WHERE uid=? AND status='pending' ORDER BY created_at DESC LIMIT 10`).all(uid) as any[];
+  },
+
+  logAgentAction(uid: number, planId: number | null, tool: string, input: string, output: string, status = "ok") {
+    db.prepare(`INSERT INTO agent_log(uid,plan_id,tool,input,output,status) VALUES(?,?,?,?,?,?)`)
+      .run(uid, planId, tool, input.slice(0, 500), output.slice(0, 1000), status);
+  },
+};

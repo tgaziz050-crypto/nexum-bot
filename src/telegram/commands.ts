@@ -91,38 +91,131 @@ export function registerCommands(bot: Bot<BotContext>) {
     Db.ensureUser(uid, name, ctx.from!.username ?? "");
     Db.finEnsureDefaults(uid);
 
-    // Detect language from Telegram interface language
-    const tgLang = ctx.from!.language_code ?? "en";
+    // Always save Telegram language
+    const tgLang = (ctx.from!.language_code ?? "en").split("-")[0]!;
+    try { Db.setLang(uid, tgLang); } catch {}
+
+    // Welcome messages by language
+    const welcomeByLang: Record<string, string> = {
+      ru: [
+        `⚡ *NEXUM*`,
+        ``,
+        `Привет${name ? `, ${name}` : ""}! Я твой автономный ИИ агент.`,
+        ``,
+        `*Что я умею:*`,
+        `🧠 Помню всё о тебе между сессиями`,
+        `🌐 Ищу информацию в реальном времени`,
+        `🎙 Понимаю голосовые сообщения и видеокружки`,
+        `👁 Анализирую фото и изображения`,
+        `💰 Финансы · 📝 Заметки · ✅ Задачи · 🎯 Привычки`,
+        `⏰ Напоминания · 🔔 Будильники`,
+        `💻 PC Агент — управляю твоим компьютером`,
+        `🗺 Планирую и выполняю сложные задачи`,
+        `🧰 Сам разрабатываю новые инструменты`,
+        ``,
+        `Просто напиши мне — я всё пойму.`,
+        `📱 *Apps* — кнопка внизу слева`,
+      ].join("\n"),
+
+      en: [
+        `⚡ *NEXUM*`,
+        ``,
+        `Hey${name ? `, ${name}` : ""}! I'm your autonomous AI agent.`,
+        ``,
+        `*What I can do:*`,
+        `🧠 Remember everything about you`,
+        `🌐 Search the internet in real time`,
+        `🎙 Understand voice messages & video notes`,
+        `👁 Analyze photos and images`,
+        `💰 Finance · 📝 Notes · ✅ Tasks · 🎯 Habits`,
+        `⏰ Reminders · 🔔 Alarms`,
+        `💻 PC Agent — control your computer`,
+        `🗺 Plan and execute complex tasks`,
+        `🧰 Self-develop new tools on demand`,
+        ``,
+        `Just write to me — I understand everything.`,
+        `📱 *Apps* — button at the bottom left`,
+      ].join("\n"),
+
+      uz: [
+        `⚡ *NEXUM*`,
+        ``,
+        `Salom${name ? `, ${name}` : ""}! Men sening avtonom AI agentingman.`,
+        ``,
+        `*Nima qila olaman:*`,
+        `🧠 Seni hamma narsani eslab qolaman`,
+        `🌐 Internet orqali real vaqtda qidiraman`,
+        `🎙 Ovozli xabarlar va video doiralarni tushunaman`,
+        `👁 Rasmlar va fotosuratlarni tahlil qilaman`,
+        `💰 Moliya · 📝 Eslatmalar · ✅ Vazifalar · 🎯 Odatlar`,
+        `⏰ Eslatmalar · 🔔 Signallar`,
+        `💻 PC Agent — kompyuterni boshqaraman`,
+        `🗺 Murakkab vazifalarni rejalashtiraman`,
+        ``,
+        `Menga yozing — hammasini tushunaman.`,
+        `📱 *Apps* — pastda chap tomonda`,
+      ].join("\n"),
+    };
+
+    const startMsg = welcomeByLang[tgLang] ?? welcomeByLang["en"]!;
+
+    // Send welcome with photo if available
     try {
-      const user = Db.getUser(uid);
-      if (user && (!user.lang || user.lang === "ru")) {
-        // Update lang based on Telegram language_code
-        Db.setLang(uid, tgLang.split("-")[0]);
-      }
-    } catch {}
-
-    const startMsg =
-      `👋 Hi${name ? `, ${name}` : ""}! I'm **NEXUM** — your autonomous AI agent.\n\n` +
-      `🧠 I remember everything about you\n` +
-      `🌐 I search the internet in real time\n` +
-      `🎤 I understand voice messages\n` +
-      `👁 I analyze photos\n` +
-      `💰 Finance · 📝 Notes · ✅ Tasks · 🎯 Habits\n` +
-      `⏰ Reminders · 🔔 Alarms\n` +
-      `💻 PC Agent — I control your computer\n` +
-      `🗺 I plan and execute complex tasks\n\n` +
-      `Just write to me — I understand everything!\n` +
-      `📱 Apps — button at the bottom left`;
-
-    await ctx.reply(startMsg, {
-      parse_mode: "Markdown",
-      reply_markup: { remove_keyboard: true },
-    });
+      await ctx.replyWithPhoto(
+        "https://i.imgur.com/placeholder.png", // will fallback to text if fails
+        { caption: startMsg, parse_mode: "Markdown" }
+      );
+    } catch {
+      await ctx.reply(startMsg, { parse_mode: "Markdown" });
+    }
 
     if (Config.WEBAPP_URL) {
       const kb = getMiniAppBtns(uid);
-      if (kb) await ctx.reply("📱 *NEXUM Apps:*", { parse_mode: "Markdown", reply_markup: kb });
+      if (kb) {
+        await ctx.reply(
+          tgLang === "ru" ? "📱 *Приложения NEXUM:*" :
+          tgLang === "uz" ? "📱 *NEXUM Ilovalari:*" :
+          "📱 *NEXUM Apps:*",
+          { parse_mode: "Markdown", reply_markup: kb }
+        );
+      }
     }
+
+    // Register bot commands for this user's language
+    try {
+      const cmds = tgLang === "ru" ? [
+        { command: "help",       description: "Помощь и список команд" },
+        { command: "apps",       description: "Открыть приложения" },
+        { command: "finance",    description: "Финансы и расходы" },
+        { command: "tasks",      description: "Мои задачи" },
+        { command: "notes",      description: "Мои заметки" },
+        { command: "habits",     description: "Трекер привычек" },
+        { command: "remind",     description: "Поставить напоминание" },
+        { command: "search",     description: "Поиск в интернете" },
+        { command: "status",     description: "Статус системы" },
+        { command: "tools",      description: "Динамические тулы" },
+        { command: "newtool",    description: "Создать новый тул" },
+        { command: "pc_connect", description: "Подключить компьютер" },
+        { command: "new",        description: "Новый диалог" },
+        { command: "memory",     description: "Моя память о тебе" },
+      ] : [
+        { command: "help",       description: "Help and commands" },
+        { command: "apps",       description: "Open apps" },
+        { command: "finance",    description: "Finance tracker" },
+        { command: "tasks",      description: "My tasks" },
+        { command: "notes",      description: "My notes" },
+        { command: "habits",     description: "Habit tracker" },
+        { command: "remind",     description: "Set a reminder" },
+        { command: "search",     description: "Search the web" },
+        { command: "status",     description: "System status" },
+        { command: "tools",      description: "Dynamic tools" },
+        { command: "newtool",    description: "Create new tool" },
+        { command: "pc_connect", description: "Connect computer" },
+        { command: "new",        description: "New conversation" },
+        { command: "memory",     description: "What I know about you" },
+      ];
+      await ctx.api.setMyCommands(cmds, { scope: { type: "chat", chat_id: ctx.chat!.id } });
+    } catch {}
   });
 
   // ── /apps ────────────────────────────────────────────────────────────
@@ -677,10 +770,9 @@ export function registerCommands(bot: Bot<BotContext>) {
     setTimeout(() => process.exit(0), 2000);
   });
 
-  // /diagnostic — check AI keys and system config (admin)
+  // /diagnostic — check AI keys and system config (admin) — INSTANT, no AI call
   bot.command("diagnostic", async (ctx) => {
     if (!isAdmin(ctx.from!.id)) { await ctx.reply("🚫 Admin only."); return; }
-    const msg = await ctx.reply("🔍 *Проверяю систему...*", { parse_mode: "Markdown" });
 
     const providers = [
       { name: "Cerebras",   envs: ["CB1","CB2","CB3","CB4","CB5","CB6","CB7"] },
@@ -692,31 +784,39 @@ export function registerCommands(bot: Bot<BotContext>) {
       { name: "OpenRouter", envs: ["OR1","OR2","OR3"] },
       { name: "DeepSeek",   envs: ["DS1","DS2","DS3"] },
       { name: "Claude",     envs: ["CL1"] },
+      { name: "Serper",     envs: ["SERPER_KEY1","SERPER_KEY2","SERPER_KEY3"] },
     ];
 
     const lines: string[] = ["🔑 *AI Keys:*\n"];
     let totalKeys = 0;
     for (const p of providers) {
-      const found = p.envs.filter(k => process.env[k]?.trim()).length;
-      totalKeys += found;
-      const icon = found > 0 ? "✅" : "❌";
-      lines.push(`${icon} ${p.name}: ${found}/${p.envs.length}`);
+      const keys = p.envs.filter(k => process.env[k]?.trim());
+      totalKeys += keys.length;
+      const icon = keys.length > 0 ? "✅" : "❌";
+      lines.push(`${icon} *${p.name}*: ${keys.length}/${p.envs.length}`);
     }
 
+    const uptime = Math.round(process.uptime() / 60);
     lines.push(`\n📊 *Итого ключей*: ${totalKeys}`);
     lines.push(`\n⚙️ *Конфиг:*`);
-    lines.push(`• WEBAPP_URL: ${process.env.WEBAPP_URL ? "✅" : "❌ не задан"}`);
-    lines.push(`• BOT_TOKEN: ${process.env.BOT_TOKEN ? "✅" : "❌"}`);
-    lines.push(`• ADMIN_IDS: ${process.env.ADMIN_IDS ? "✅ " + process.env.ADMIN_IDS : "❌"}`);
+    lines.push(`• WEBAPP\\_URL: ${process.env.WEBAPP_URL ? "✅ задан" : "❌ НЕ ЗАДАН — Mini Apps не работают!"}`);
+    lines.push(`• BOT\\_TOKEN: ${process.env.BOT_TOKEN ? "✅" : "❌"}`);
+    lines.push(`• ADMIN\\_IDS: ${process.env.ADMIN_IDS ?? "❌ не задан"}`);
+    lines.push(`• NODE\\_ENV: ${process.env.NODE_ENV ?? "—"}`);
+    lines.push(`\n⏱ *Uptime*: ${uptime} мин`);
+    lines.push(`💾 *RAM*: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`);
 
-    try {
-      const result = await ask([{ role: "user", content: "Say exactly: NEXUM_OK" }], "fast");
-      lines.push(`\n🧠 *AI тест*: ${result?.includes("NEXUM_OK") || result?.length > 0 ? "✅ работает" : "⚠️ " + result?.slice(0,50)}`);
-    } catch (e: any) {
-      lines.push(`\n🧠 *AI тест*: ❌ ${e.message.slice(0, 150)}`);
+    if (totalKeys === 0) {
+      lines.push(`\n⚠️ *Нет ни одного AI ключа!*`);
+      lines.push(`Добавь ключи в Railway Variables:`);
+      lines.push(`CB1, GR1, G1 и т.д.`);
+    } else if (totalKeys < 3) {
+      lines.push(`\n⚠️ Мало ключей — добавь больше для надёжности`);
+    } else {
+      lines.push(`\n✅ Система выглядит нормально`);
     }
 
-    await bot.api.editMessageText(ctx.chat!.id, msg.message_id, lines.join("\n"), { parse_mode: "Markdown" }).catch(() => {});
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   });
 
   // ── DYNAMIC TOOLS COMMANDS ────────────────────────────────────────────────

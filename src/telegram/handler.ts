@@ -320,8 +320,13 @@ export function registerHandlers(bot: Bot<BotContext>) {
       fs.unlinkSync(tmp);
 
       if (!transcript) {
-        // Retry once with a different message
-        await ctx.reply("🎙 Could not recognize. Please try speaking clearly.");
+        const lang = Db.getUser(uid)?.lang ?? "en";
+        const errMsg = lang === "ru"
+          ? "🎙 Не удалось распознать голос. Говори чётче и ближе к микрофону."
+          : lang === "uz"
+          ? "🎙 Ovoz tanilmadi. Mikrofonga yaqinroq va aniqroq gapiring."
+          : "🎙 Could not recognize speech. Please speak clearly and closer to the mic.";
+        await ctx.reply(errMsg);
         return;
       }
 
@@ -353,7 +358,10 @@ export function registerHandlers(bot: Bot<BotContext>) {
       fs.unlinkSync(tmp);
 
       if (!transcript) {
-        await ctx.reply("🎥 Couldn't transcribe the video. Try sending a voice message.");
+        const lang = Db.getUser(uid)?.lang ?? "en";
+        await ctx.reply(lang === "ru"
+          ? "🎥 Не удалось распознать речь в видео. Попробуй отправить голосовое сообщение."
+          : "🎥 Couldn't transcribe the video. Try sending a voice message.");
         return;
       }
 

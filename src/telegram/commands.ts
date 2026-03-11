@@ -14,8 +14,7 @@ import { ask } from "../agent/engine.js";
 import { buildSystemPrompt } from "../agent/memory.js";
 import { sendFinanceDashboard } from "../tools/finance.js";
 import { isAgentOnline, sendToAgent, getAgentInfo } from "../agent/pcagent.js";
-import { getHealthStatus } from "../core/heartbeat.js";
-import { silenceAlerts } from "../core/heartbeat.js";
+import { getHealthStatus, silenceAlerts } from "../core/heartbeat.js";
 import { log } from "../core/logger.js";
 import * as crypto from "crypto";
 

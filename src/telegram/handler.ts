@@ -141,14 +141,14 @@ async function aiRespond(ctx: BotContext, userText: string, task: "general" | "c
     const msg = await ctx.reply("🔨 *Developing new tool...*\n\nGenerating code, please wait.", { parse_mode: "Markdown" });
     const result = await generateAndRegisterTool(uid, userText);
     const toolCount = listDynamicTools().length;
-    await bot.api.editMessageText(
+    await ctx.api.editMessageText(
       chatId,
       msg.message_id,
       result.success
         ? `✅ *New tool created and connected!*\n\n${result.message}\n\n🧰 Total dynamic tools: ${toolCount}\nUse /tools to see all.`
         : `❌ *Tool creation failed*\n\n${result.message}`,
       { parse_mode: "Markdown" }
-    );
+    ).catch(() => {});
     return;
   }
 

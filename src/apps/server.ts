@@ -12,7 +12,14 @@ import { Config } from "../core/config.js";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webDir = path.join(__dirname);
+// Try dist/apps first (compiled), then src/apps (dev/fallback)
+const possibleDirs = [
+  __dirname,
+  path.join(__dirname, "../../src/apps"),
+  path.join(process.cwd(), "src/apps"),
+  path.join(process.cwd(), "dist/apps"),
+];
+const webDir = possibleDirs.find(d => fs.existsSync(path.join(d, "hub.html"))) ?? __dirname;
 
 function generateWebAppToken(uid: number): string {
   return crypto.createHmac("sha256", Config.BOT_TOKEN).update(String(uid)).digest("hex").slice(0, 16);

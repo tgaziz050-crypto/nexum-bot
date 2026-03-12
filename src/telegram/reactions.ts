@@ -1,8 +1,13 @@
+/**
+ * NEXUM — Smart Reactions
+ * Sets actual Telegram emoji reactions ON the user's message.
+ * NOT sent as text. Adaptive frequency — not on every message.
+ */
 import { Bot } from "grammy";
 import { ask } from "../agent/engine.js";
 import { log } from "../core/logger.js";
 
-// All 70+ Telegram reactions available
+// All standard Telegram reactions (emoji only, no custom stickers)
 const ALL_REACTIONS = [
   "👍","👎","❤","🔥","🥰","👏","😁","🤔","🤯","😱","🤬","😢","🎉","🤩","🤮","💩",
   "🙏","👌","🕊","🤡","🥱","🥴","😍","🐳","❤‍🔥","🌚","🌭","💯","🤣","⚡","🍌","🏆",
@@ -11,85 +16,74 @@ const ALL_REACTIONS = [
   "😘","💊","🙊","😎","👾","🤷","🤷‍♀","🤷‍♂","😡",
 ];
 
-// Cooldown: 20s per chat
+// Per-chat cooldown state
 const lastReactionTime = new Map<number, number>();
-// Track last 3 reactions per chat to avoid repetition
 const reactionHistory  = new Map<number, string[]>();
+const msgReactionCount = new Map<number, number>(); // messages since last reaction
 
-// Patterns that trigger an ACK reaction (👀) while bot is "thinking"
-const ACK_PATTERNS = [
-  /сделай|напиши|создай|придумай|помоги|найди|переведи|объясни/i,
-  /make|write|create|find|explain|translate|generate|build/i,
-  /дай|покажи|расскажи|нарисуй|сгенерируй/i,
-];
-
-export function shouldAck(text: string): boolean {
-  return ACK_PATTERNS.some(p => p.test(text));
-}
+// Cooldown: minimum 30 seconds between reactions per chat
+const COOLDOWN_MS = 30_000;
+// Skip every N messages (react to roughly 1 in 5)
+const REACT_EVERY_N = 5;
 
 export async function setReaction(bot: Bot, chatId: number, messageId: number, emoji: string, isBig = false) {
   try {
-    await (bot.api as unknown as {
-      setMessageReaction: (p: { chat_id: number; message_id: number; reaction: unknown[]; is_big: boolean }) => Promise<void>
-    }).setMessageReaction({
-      chat_id:    chatId,
+    await (bot.api as any).setMessageReaction({
+      chat_id: chatId,
       message_id: messageId,
-      reaction:   [{ type: "emoji", emoji }],
-      is_big:     isBig,
+      reaction: [{ type: "emoji", emoji }],
+      is_big: isBig,
     });
   } catch {
-    // Reactions fail silently (old bots, no permission, etc.)
+    // Silently ignore — reactions may not be supported in all chat types
   }
 }
 
 export async function clearReaction(bot: Bot, chatId: number, messageId: number) {
   try {
-    await (bot.api as unknown as {
-      setMessageReaction: (p: { chat_id: number; message_id: number; reaction: unknown[] }) => Promise<void>
-    }).setMessageReaction({
-      chat_id:    chatId,
-      message_id: messageId,
-      reaction:   [],
-    });
+    await (bot.api as any).setMessageReaction({ chat_id: chatId, message_id: messageId, reaction: [] });
   } catch {}
 }
 
-export async function smartReact(bot: Bot, chatId: number, messageId: number, userText: string) {
+/**
+ * Smart react — places emoji reaction on user's message.
+ * Rate-limited, not on every message, adapts to message content.
+ */
+export async function smartReact(bot: Bot, chatId: number, messageId: number, userText: string): Promise<void> {
+  const now = Date.now();
+
   // Cooldown check
-  const now   = Date.now();
-  const last  = lastReactionTime.get(chatId) ?? 0;
-  if (now - last < 20_000) return;
+  const last = lastReactionTime.get(chatId) ?? 0;
+  if (now - last < COOLDOWN_MS) return;
+
+  // Count-based throttle — only react to ~1 in 5 messages
+  const count = (msgReactionCount.get(chatId) ?? 0) + 1;
+  msgReactionCount.set(chatId, count);
+  if (count % REACT_EVERY_N !== 0) return;
 
   const history = reactionHistory.get(chatId) ?? [];
 
   try {
-    const prompt = `You are choosing a Telegram emoji reaction to a message. 
-Available reactions: ${ALL_REACTIONS.join(" ")}
-Recent reactions used (don't repeat last 3): ${history.slice(-3).join(" ") || "none"}
-
-User message: "${userText.slice(0, 200)}"
-
+    const prompt = `Choose ONE Telegram emoji reaction for this message.
+Available: ${ALL_REACTIONS.join(" ")}
+Recent (avoid repeating): ${history.slice(-3).join(" ") || "none"}
+Message: "${userText.slice(0, 200)}"
 Rules:
-- Reply with ONLY the single emoji that best matches the message's emotion/topic
-- Reply NONE if the message is neutral/plain and no reaction fits
-- Don't repeat recently used reactions
-- Match the energy: happy → 😁🔥, sad → 😢, funny → 😂🤣, impressive → 🤯💯
-
-Your answer (single emoji or NONE):`;
+- Reply with ONLY the emoji (e.g. 👍)
+- Reply SKIP if message is plain/neutral
+- Match emotion: happy→🔥😁, sad→😢, funny→😂🤣, impressive→🤯💯, question→🤔
+Single emoji or SKIP:`;
 
     const result = await ask([{ role: "user", content: prompt }], "fast");
-    const emoji  = result.trim().split(/\s/)[0] ?? "";
+    const emoji = result.trim().split(/\s/)[0] ?? "";
 
-    if (!emoji || emoji === "NONE" || !ALL_REACTIONS.includes(emoji)) return;
+    if (!emoji || emoji === "SKIP" || emoji === "NONE" || !ALL_REACTIONS.includes(emoji)) return;
 
-    // Detect is_big (3+ exclamation marks, or hype words)
-    const isBig = /!!!|невероятно|amazing|incredible|обалдеть|охуеть/i.test(userText);
+    const isBig = /!!!|wow|невероятно|amazing|incredible|обалдеть/i.test(userText);
 
     await setReaction(bot, chatId, messageId, emoji, isBig);
     lastReactionTime.set(chatId, now);
-
-    const updated = [...history, emoji].slice(-5);
-    reactionHistory.set(chatId, updated);
+    reactionHistory.set(chatId, [...history, emoji].slice(-5));
   } catch (e) {
     log.debug(`smartReact: ${e}`);
   }

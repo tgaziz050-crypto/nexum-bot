@@ -1,6 +1,6 @@
 /**
  * NEXUM — Habits Module
- * Трекер привычек: стрики, статистика, AI-анализ
+ * Track habits, streaks, AI analysis. Multilingual.
  */
 import type { Bot } from "grammy";
 import type { BotContext } from "../telegram/bot.js";
@@ -8,44 +8,45 @@ import { Db } from "../core/db.js";
 import { ask } from "../agent/engine.js";
 import { log } from "../core/logger.js";
 
-function streak(n: number): string {
+function streakLabel(n: number): string {
   if (n === 0) return "0";
-  if (n < 3) return `${n} 🌱`;
-  if (n < 7) return `${n} 🔥`;
+  if (n < 3)  return `${n} 🌱`;
+  if (n < 7)  return `${n} 🔥`;
   if (n < 14) return `${n} 💪`;
   if (n < 30) return `${n} ⚡`;
   return `${n} 🏆`;
 }
 
 export function registerHabitHandlers(bot: Bot<BotContext>) {
-  // /habits — view all habits
+  // /habits — view all habits (NOTE: commands.ts opens webapp if available)
+  // This handles /habits without webapp URL
   bot.command("habits", async (ctx) => {
-    const uid = ctx.from!.id;
+    const uid    = ctx.from!.id;
     const habits = Db.getHabits(uid);
 
     if (!habits.length) {
       await ctx.reply(
-        "🎯 *Привычки пусты*\n\nДобавь: `/habit 🏃 Бег`\nили: `/habit 💧 Пить воду каждый день`",
+        "🎯 *No habits yet*\n\nAdd one: `/habit 🏃 Running`\nor: `/habit 💧 Drink water`",
         { parse_mode: "Markdown" }
       );
       return;
     }
 
-    let text = "🎯 *Мои привычки — сегодня:*\n\n";
+    let text = "🎯 *My habits — today:*\n\n";
     const keyboard: any[][] = [];
 
     for (const h of habits) {
-      const doneToday = Db.isHabitDoneToday(h.id);
-      const check = doneToday ? "✅" : "⬜";
-      text += `${check} ${h.emoji} *${h.name}* — серия: ${streak(h.streak)}\n`;
-      if (!doneToday) {
-        keyboard.push([{ text: `${h.emoji} Отметить: ${h.name}`, callback_data: `habit:done:${h.id}` }]);
+      const done  = Db.isHabitDoneToday(h.id);
+      const check = done ? "✅" : "⬜";
+      text += `${check} ${h.emoji} *${h.name}* — streak: ${streakLabel(h.streak)}\n`;
+      if (!done) {
+        keyboard.push([{ text: `${h.emoji} Done: ${h.name}`, callback_data: `habit:done:${h.id}` }]);
       }
     }
 
     keyboard.push([
-      { text: "📊 AI Анализ", callback_data: "habit:analyze" },
-      { text: "🗑 Удалить", callback_data: "habit:manage" },
+      { text: "📊 AI Analysis", callback_data: "habit:analyze" },
+      { text: "🗑 Manage", callback_data: "habit:manage" },
     ]);
 
     await ctx.reply(text, {
@@ -54,120 +55,135 @@ export function registerHabitHandlers(bot: Bot<BotContext>) {
     });
   });
 
-  // /habit <name> — add habit
+  // /habit <emoji> <name> — add habit
   bot.command("habit", async (ctx) => {
-    const uid = ctx.from!.id;
+    const uid  = ctx.from!.id;
     const text = ctx.match?.trim();
     if (!text) {
-      await ctx.reply("Добавь привычку: `/habit 🏃 Бег`\nили `/habit 💧 Пить воду`", { parse_mode: "Markdown" });
+      await ctx.reply("Usage: `/habit 🏃 Running`", { parse_mode: "Markdown" });
       return;
     }
 
-    // Extract emoji if present at start
-    const emojiMatch = /^(\p{Emoji})\s*/u.exec(text);
-    const emoji = emojiMatch ? emojiMatch[1]! : "✅";
-    const name = emojiMatch ? text.slice(emojiMatch[0].length).trim() : text;
-
-    if (!name) { await ctx.reply("Напиши название привычки!"); return; }
+    // Extract emoji if present
+    const emojiMatch = /^(\p{Emoji})\s+(.+)/u.exec(text);
+    let emoji = "✅";
+    let name  = text;
+    if (emojiMatch) { emoji = emojiMatch[1]!; name = emojiMatch[2]!.trim(); }
 
     const id = Db.addHabit(uid, name, emoji);
-    await ctx.reply(
-      `${emoji} *${name}* — добавлено!\n\n🎯 Начни сегодня и не ломай серию!\n\n/habits — все привычки`,
-      { parse_mode: "Markdown" }
-    );
+    await ctx.reply(`${emoji} *${name}* added to habits!\n\nUse /habits to track it.`, { parse_mode: "Markdown" });
   });
 
-  // Callback handler
-  bot.on("callback_query:data", async (ctx) => {
-    const data = ctx.callbackQuery.data;
-    if (!data.startsWith("habit:")) return;
-    const [, action, idStr] = data.split(":");
-    const uid = ctx.from.id;
+  // Habit done callback
+  bot.callbackQuery(/^habit:done:(\d+)$/, async (ctx) => {
+    const uid     = ctx.from.id;
+    const habitId = parseInt(ctx.match[1]!);
+    const habits  = Db.getHabits(uid);
+    const habit   = habits.find((h: any) => h.id === habitId);
 
-    if (action === "done") {
-      const id = parseInt(idStr!);
-      const habits = Db.getHabits(uid);
-      const habit = habits.find(h => h.id === id);
-      if (!habit) { await ctx.answerCallbackQuery("❌ Не найдено"); return; }
-
-      if (Db.isHabitDoneToday(id)) {
-        await ctx.answerCallbackQuery("Уже отмечено сегодня! ✅");
-        return;
-      }
-
-      Db.logHabit(id, uid);
-      const updated = Db.getHabits(uid).find(h => h.id === id);
-      await ctx.answerCallbackQuery(`${habit.emoji} Отмечено! Серия: ${updated?.streak ?? 1} 🔥`);
-
-      // Edit the message to update checkmarks
-      const allHabits = Db.getHabits(uid);
-      let text = "🎯 *Мои привычки — сегодня:*\n\n";
-      const keyboard: any[][] = [];
-      for (const h of allHabits) {
-        const doneToday = Db.isHabitDoneToday(h.id);
-        const check = doneToday ? "✅" : "⬜";
-        text += `${check} ${h.emoji} *${h.name}* — серия: ${streak(h.streak)}\n`;
-        if (!doneToday) keyboard.push([{ text: `${h.emoji} Отметить: ${h.name}`, callback_data: `habit:done:${h.id}` }]);
-      }
-      keyboard.push([{ text: "📊 AI Анализ", callback_data: "habit:analyze" }]);
-      await ctx.editMessageText(text, {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: keyboard },
-      }).catch(() => {});
-
-    } else if (action === "analyze") {
-      await ctx.answerCallbackQuery("⏳ Анализирую...");
-      const habits = Db.getHabits(uid);
-      if (!habits.length) { await ctx.reply("Нет привычек для анализа."); return; }
-
-      const habitsText = habits.map(h =>
-        `${h.emoji} ${h.name}: серия ${h.streak} дней, частота: ${h.frequency}`
-      ).join("\n");
-
-      const msgs = [
-        { role: "system" as const, content: "Ты коуч по продуктивности. Анализируй привычки и давай конкретные советы. Отвечай на языке пользователя." },
-        { role: "user" as const, content: `Мои привычки:\n${habitsText}\n\nДай честный анализ и 3 конкретных совета.` },
-      ];
-      const result = await ask(msgs, "analysis").catch(() => "Не смог проанализировать.");
-      await ctx.reply(`📊 *AI Анализ привычек:*\n\n${result}`, { parse_mode: "Markdown" });
-
-    } else if (action === "manage") {
-      const habits = Db.getHabits(uid);
-      if (!habits.length) { await ctx.answerCallbackQuery("Нет привычек"); return; }
-      await ctx.answerCallbackQuery();
-      const keyboard = habits.map(h => [
-        { text: `🗑 ${h.emoji} ${h.name}`, callback_data: `habit:delete:${h.id}` }
-      ]);
-      await ctx.reply("Выбери привычку для удаления:", { reply_markup: { inline_keyboard: keyboard } });
-
-    } else if (action === "delete") {
-      const id = parseInt(idStr!);
-      Db.deleteHabit(uid, id);
-      await ctx.answerCallbackQuery("🗑 Удалено");
-      await ctx.deleteMessage().catch(() => {});
+    if (!habit) { await ctx.answerCallbackQuery("Not found"); return; }
+    if (Db.isHabitDoneToday(habitId)) {
+      await ctx.answerCallbackQuery("Already done today! ✅");
+      return;
     }
+
+    Db.logHabit(habitId, uid);
+    const newStreak = habit.streak + 1;
+    await ctx.answerCallbackQuery(`${habit.emoji} Done! Streak: ${streakLabel(newStreak)}`);
+
+    // Refresh the habits list
+    const allHabits = Db.getHabits(uid);
+    let text = "🎯 *My habits — today:*\n\n";
+    const keyboard: any[][] = [];
+    for (const h of allHabits) {
+      const done  = Db.isHabitDoneToday(h.id);
+      const check = done ? "✅" : "⬜";
+      text += `${check} ${h.emoji} *${h.name}* — streak: ${streakLabel(h.streak)}\n`;
+      if (!done) keyboard.push([{ text: `${h.emoji} Done: ${h.name}`, callback_data: `habit:done:${h.id}` }]);
+    }
+    keyboard.push([{ text: "📊 AI Analysis", callback_data: "habit:analyze" }]);
+    await ctx.editMessageText(text, { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } }).catch(() => {});
+  });
+
+  // Habit AI analysis
+  bot.callbackQuery("habit:analyze", async (ctx) => {
+    await ctx.answerCallbackQuery("Analyzing...");
+    const uid    = ctx.from.id;
+    const habits = Db.getHabits(uid);
+    if (!habits.length) { await ctx.reply("No habits to analyze."); return; }
+
+    const habitData = habits.map((h: any) =>
+      `${h.name}: streak=${h.streak}, emoji=${h.emoji}`
+    ).join("; ");
+
+    try {
+      const analysis = await ask([{
+        role: "user",
+        content: `Analyze these habits and give a short motivating analysis with tips. User's habits: ${habitData}. Be encouraging, practical, 3-4 sentences.`
+      }], "fast");
+      await ctx.reply(`📊 *Habit Analysis*\n\n${analysis}`, { parse_mode: "Markdown" });
+    } catch { await ctx.reply("📊 Keep going with your habits! Consistency is key 🔥"); }
+  });
+
+  // Habit manage (delete)
+  bot.callbackQuery("habit:manage", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const uid    = ctx.from.id;
+    const habits = Db.getHabits(uid);
+    if (!habits.length) { await ctx.editMessageText("No habits.").catch(() => {}); return; }
+    const keyboard = habits.map((h: any) => [
+      { text: `🗑 ${h.emoji} ${h.name}`, callback_data: `habit:del:${h.id}` }
+    ]);
+    keyboard.push([{ text: "← Back", callback_data: "habit:back" }]);
+    await ctx.editMessageText("🗑 *Delete a habit:*", {
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: keyboard },
+    }).catch(() => {});
+  });
+
+  bot.callbackQuery(/^habit:del:(\d+)$/, async (ctx) => {
+    const uid     = ctx.from.id;
+    const habitId = parseInt(ctx.match[1]!);
+    Db.deleteHabit(uid, habitId);
+    await ctx.answerCallbackQuery("🗑 Deleted");
+    await ctx.deleteMessage().catch(() => {});
+  });
+
+  bot.callbackQuery("habit:back", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const uid    = ctx.from.id;
+    const habits = Db.getHabits(uid);
+    let text = "🎯 *My habits:*\n\n";
+    const keyboard: any[][] = [];
+    for (const h of habits) {
+      const done  = Db.isHabitDoneToday(h.id);
+      const check = done ? "✅" : "⬜";
+      text += `${check} ${h.emoji} *${h.name}* — streak: ${streakLabel(h.streak)}\n`;
+      if (!done) keyboard.push([{ text: `${h.emoji} Done: ${h.name}`, callback_data: `habit:done:${h.id}` }]);
+    }
+    await ctx.editMessageText(text, { parse_mode: "Markdown", reply_markup: { inline_keyboard: keyboard } }).catch(() => {});
   });
 
   log.info("Habit handlers registered");
 }
 
-// Daily habit reminder — called from scheduler
+// Send habit reminders to all users with habits
 export async function sendHabitReminders(bot: any) {
   try {
-    const allUsers = Db.getTopUsers();
-    for (const user of allUsers) {
-      const habits = Db.getHabits(user.uid);
-      const incomplete = habits.filter(h => !Db.isHabitDoneToday(h.id));
-      if (!incomplete.length) continue;
-
-      const text = `🎯 *Привычки на сегодня:*\n\n` +
-        incomplete.map(h => `⬜ ${h.emoji} ${h.name}`).join("\n") +
-        `\n\n/habits — отметить выполненные`;
-
-      await bot.api.sendMessage(user.uid, text, { parse_mode: "Markdown" }).catch(() => {});
-      await new Promise(r => setTimeout(r, 100));
+    const users = Db.getTopUsers();
+    for (const u of users) {
+      try {
+        const habits = Db.getHabits(u.uid);
+        if (!habits.length) continue;
+        const pending = habits.filter((h: any) => !Db.isHabitDoneToday(h.id));
+        if (!pending.length) continue;
+        const names = pending.map((h: any) => `${h.emoji} ${h.name}`).join(", ");
+        await bot.api.sendMessage(u.uid,
+          `🎯 *Evening habits check-in!*\n\nNot done yet: ${names}\n\nUse /habits to mark them done.`,
+          { parse_mode: "Markdown" }
+        );
+        await new Promise(r => setTimeout(r, 200));
+      } catch {}
     }
-  } catch (e: any) {
-    log.error(`Habit reminders: ${e.message}`);
-  }
+  } catch (e: any) { log.error(`Habit reminders: ${e.message}`); }
 }

@@ -143,11 +143,11 @@ async function sendAIAnalysis(bot: any, chatId: number, uid: number) {
 
 export async function parseFinanceFromText(text: string): Promise<{ detected:boolean; type?:string; amount?:number; category?:string; note?:string }> {
   const lower = text.toLowerCase();
-  const finWords = ["потратил","купил","заплатил","spent","paid","bought","доход","получил","заработал","income","earned","перевёл","перекинул","transfer","сумм","тысяч","рублей","usd","uzs","rub"];
+  const finWords = ["потратил","купил","заплатил","spent","paid","bought","доход","получил","заработал","income","earned","перевёл","перекинул","transfer","сумм","тысяч","рублей","usd","uzs","rub","xarajat","sotib","to'ladim","maosh","daromad","harcadım","satın","ödedim"];
   if (!finWords.some(w=>lower.includes(w)) || !/\d+/.test(text)) return { detected:false };
 
   try {
-    const res = await ask([{ role:"user", content:`Это финансовая транзакция? "${text}"\nОтветь ТОЛЬКО JSON без markdown: {"detected":true/false,"type":"expense/income/transfer","amount":число,"category":"Еда/Транспорт/Покупки/Развлечения/Связь/Здоровье/Жильё/Инвестиции/Зарплата/Прочее","note":""}` }], "fast");
+    const res = await ask([{ role:"user", content:`Is this a financial transaction in any language? "${text}"\nReply ONLY valid JSON, no markdown: {"detected":true/false,"type":"expense/income/transfer","amount":number,"category":"Food/Transport/Shopping/Entertainment/Utilities/Health/Housing/Investments/Salary/Other","note":""}` }], "fast");
     return JSON.parse(res.replace(/```json|```/g,"").trim());
   } catch { return { detected:false }; }
 }

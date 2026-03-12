@@ -73,6 +73,22 @@ async function main() {
   log.info("Starting cron scheduler");
   startScheduler(bot as any);
 
+  // Copy HTML app files from src/apps to dist/apps if needed
+  try {
+    const { existsSync, mkdirSync, readdirSync, copyFileSync } = await import("fs");
+    const { join, dirname } = await import("path");
+    const { fileURLToPath } = await import("url");
+    const srcApps = join(process.cwd(), "src/apps");
+    const distApps = join(process.cwd(), "dist/apps");
+    if (existsSync(srcApps) && existsSync(distApps)) {
+      const htmlFiles = readdirSync(srcApps).filter((f: string) => f.endsWith(".html"));
+      for (const f of htmlFiles) {
+        copyFileSync(join(srcApps, f), join(distApps, f));
+      }
+      if (htmlFiles.length) log.info(`Copied ${htmlFiles.length} HTML app files to dist/apps`);
+    }
+  } catch (e: any) { log.warn(`HTML copy skipped: ${e.message}`); }
+
   log.info(`Starting web app server on port ${Config.WEBAPP_PORT}`);
   startWebAppServer(Config.WEBAPP_PORT);
 

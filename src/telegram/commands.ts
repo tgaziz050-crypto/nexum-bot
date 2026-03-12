@@ -159,15 +159,8 @@ export function registerCommands(bot: Bot<BotContext>) {
 
     const startMsg = welcomeByLang[tgLang] ?? welcomeByLang["en"]!;
 
-    // Send welcome with photo if available
-    try {
-      await ctx.replyWithPhoto(
-        "https://i.imgur.com/placeholder.png", // will fallback to text if fails
-        { caption: startMsg, parse_mode: "Markdown" }
-      );
-    } catch {
-      await ctx.reply(startMsg, { parse_mode: "Markdown" });
-    }
+    // Send welcome (no photo - use text only for reliability)
+    await ctx.reply(startMsg, { parse_mode: "Markdown" });
 
     if (Config.WEBAPP_URL) {
       const kb = getMiniAppBtns(uid);

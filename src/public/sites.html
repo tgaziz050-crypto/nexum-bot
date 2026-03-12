@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>NEXUM — Сайты</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--font:-apple-system,system-ui,sans-serif;--t:0.22s cubic-bezier(0.25,0.46,0.45,0.94);}
+[data-theme="dark"]{--bg:#000;--s:#1c1c1e;--s2:#2c2c2e;--s3:#3a3a3c;--b:rgba(255,255,255,0.07);--t1:#fff;--t2:rgba(255,255,255,0.55);--t3:rgba(255,255,255,0.25);--accent:#0a84ff;}
+[data-theme="light"]{--bg:#f2f2f7;--s:#fff;--s2:#f2f2f7;--s3:#e5e5ea;--b:rgba(0,0,0,0.06);--t1:#000;--t2:rgba(0,0,0,0.5);--t3:rgba(0,0,0,0.22);--accent:#007aff;}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+::-webkit-scrollbar{display:none;}
+body{font-family:var(--font);background:var(--bg);color:var(--t1);min-height:100vh;padding-bottom:30px;}
+.hdr{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:0.5px solid var(--b);padding:12px 18px 10px;display:flex;align-items:center;gap:10px;backdrop-filter:blur(20px);}
+.hdr-title{font-size:17px;font-weight:600;flex:1;}
+.badge{background:var(--accent);color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;}
+.sites-grid{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.site-card{background:var(--s);border-radius:16px;overflow:hidden;border:0.5px solid var(--b);cursor:pointer;transition:var(--t);}
+.site-card:active{transform:scale(0.97);}
+.site-preview{height:90px;background:linear-gradient(135deg,var(--accent),#5856d6);display:flex;align-items:center;justify-content:center;font-size:28px;}
+.site-info{padding:10px 12px;}
+.site-name{font-size:13px;font-weight:600;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.site-date{font-size:11px;color:var(--t3);}
+.site-actions{display:flex;gap:6px;margin-top:8px;}
+.site-btn{flex:1;padding:6px;background:var(--s2);border:none;border-radius:8px;color:var(--t1);font-size:11px;font-weight:500;cursor:pointer;transition:var(--t);}
+.site-btn:active{opacity:0.7;}
+.site-btn.del{color:#ff3b30;}
+.empty{text-align:center;padding:80px 20px;}
+.empty-icon{font-size:52px;opacity:0.3;margin-bottom:12px;}
+.empty p{font-size:15px;color:var(--t2);line-height:1.5;}
+.empty small{font-size:13px;color:var(--t3);margin-top:8px;display:block;}
+.spinner{text-align:center;padding:60px;font-size:24px;animation:spin 1s linear infinite;display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-title">🌐 Мои сайты</div>
+  <span class="badge" id="count">0</span>
+</div>
+<div id="main"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const dark = !tg || tg.colorScheme !== 'light';
+document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+
+function resolveUID() {
+  try { const u = tg?.initDataUnsafe?.user?.id; if (u) return u; } catch {}
+  const p = new URLSearchParams(location.search);
+  if (p.get('uid')) return parseInt(p.get('uid'));
+  return 0;
+}
+const UID = resolveUID();
+
+async function api(method, path, body) {
+  try {
+    const sep = path.includes('?') ? '&' : '?';
+    const url = method === 'GET' ? path + sep + 'uid=' + UID : path;
+    const opts = { method, headers: {'Content-Type': 'application/json'} };
+    if (body) opts.body = JSON.stringify({...body, uid: UID});
+    const r = await fetch(url, opts);
+    return r.json();
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function load() {
+  const main = document.getElementById('main');
+  main.innerHTML = '<div style="text-align:center;padding:60px"><span class="spinner">⏳</span></div>';
+  
+  const data = await api('GET', '/api/websites');
+  if (!data.ok || !data.data?.length) {
+    main.innerHTML = `<div class="empty">
+      <div class="empty-icon">🌐</div>
+      <p>Сайтов пока нет</p>
+      <small>Создай сайт командой<br><b>/website описание сайта</b></small>
+    </div>`;
+    document.getElementById('count').textContent = '0';
+    return;
+  }
+
+  const sites = data.data;
+  document.getElementById('count').textContent = sites.length;
+
+  const colors = ['#0a84ff,#5856d6','#30d158,#007aff','#ff9f0a,#ff3b30','#bf5af2,#ff2d55','#32ade6,#30d158'];
+  
+  const html = `<div class="sites-grid">${sites.map((s, i) => {
+    const grad = colors[i % colors.length];
+    const date = new Date(s.created_at).toLocaleDateString('ru-RU', {day:'2-digit',month:'short'});
+    return `<div class="site-card">
+      <div class="site-preview" style="background:linear-gradient(135deg,${grad})" onclick="openSite(${s.id})">🌐</div>
+      <div class="site-info">
+        <div class="site-name">${s.name}</div>
+        <div class="site-date">${date}</div>
+        <div class="site-actions">
+          <button class="site-btn" onclick="openSite(${s.id})">Открыть</button>
+          <button class="site-btn del" onclick="deleteSite(${s.id}, this)">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+
+  main.innerHTML = html;
+}
+
+function openSite(id) {
+  const url = '/site/' + id;
+  if (tg) {
+    tg.openLink(location.origin + url);
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
+async function deleteSite(id, btn) {
+  if (!confirm('Удалить сайт?')) return;
+  btn.textContent = '...';
+  await api('DELETE', '/api/websites/' + id);
+  load();
+}
+
+load();
+</script>
+</body>
+</html>

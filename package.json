@@ -1,13 +1,14 @@
 {
   "name": "nexum",
-  "version": "6.0.0",
+  "version": "9.0.0",
   "description": "NEXUM — Autonomous AI Agent Platform for Telegram",
   "private": true,
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "ts-node src/index.ts",
     "build": "tsc",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "install:browser": "npx playwright install chromium"
   },
   "dependencies": {
     "grammy": "^1.30.0",
@@ -19,7 +20,9 @@
     "ws": "^8.18.0",
     "express": "^4.19.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "playwright": "^1.40.0",
+    "@anthropic-ai/sdk": "^0.27.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",

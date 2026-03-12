@@ -15,43 +15,56 @@ if (!config.botToken) {
   console.error('❌ BOT_TOKEN is not set!');
   process.exit(1);
 }
+if (!config.webappUrl) {
+  console.warn('⚠️  WEBAPP_URL not set — Mini Apps will not work');
+}
 
-// ── TTS startup check ──────────────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[nexum] uncaughtException:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[nexum] unhandledRejection:', reason);
+});
+
 async function checkTTS() {
   const edgeBin = process.env.EDGE_TTS_PATH || 'edge-tts';
   try {
     const { stdout } = await execAsync(`${edgeBin} --version`, { timeout: 5000 });
     console.log(`[tts] ✅ edge-tts ready: ${stdout.trim()}`);
   } catch {
-    // Try python venv path
     try {
       const pyBin = process.env.EDGE_PYTHON_PATH || '/opt/edge-tts-env/bin/python3';
       await execAsync(`${pyBin} -c "import edge_tts; print('edge_tts OK')"`, { timeout: 5000 });
       console.log('[tts] ✅ edge-tts python module ready');
-    } catch (e2: any) {
-      console.warn('[tts] ⚠️  edge-tts not found — voice replies will fallback to text');
-      console.warn('[tts] Install: pip install edge-tts');
+    } catch {
+      console.warn('[tts] ⚠️  edge-tts not found — voice will fallback to text');
     }
   }
 }
-checkTTS();
 
-const bot = new Bot(config.botToken);
+async function main() {
+  await checkTTS();
+  const bot = new Bot(config.botToken);
+  setupHandlers(bot);
+  const server = startServer(bot);
+  startScheduler(bot);
 
-setupHandlers(bot);
-const server = startServer(bot);
-startScheduler(bot);
+  bot.catch((err: any) => {
+    console.error('[bot error]', err.error?.message || err.error);
+  });
 
-bot.catch((err: any) => {
-  console.error('[bot error]', err.error);
+  bot.start({
+    onStart: (info: any) => {
+      console.log(`[nexum] ✅ Bot started: @${info.username}`);
+      console.log(`[nexum] Webapp: ${config.webappUrl}`);
+    }
+  });
+
+  process.once('SIGINT', () => { bot.stop(); server.close(); });
+  process.once('SIGTERM', () => { bot.stop(); server.close(); });
+}
+
+main().catch(err => {
+  console.error('[nexum] Fatal startup error:', err);
+  process.exit(1);
 });
-
-bot.start({
-  onStart: (info: any) => {
-    console.log(`[nexum] ✅ Bot started: @${info.username}`);
-    console.log(`[nexum] Webapp: ${config.webappUrl}`);
-  }
-});
-
-process.once('SIGINT', () => { bot.stop(); server.close(); });
-process.once('SIGTERM', () => { bot.stop(); server.close(); });

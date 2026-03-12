@@ -50,7 +50,46 @@ export function startServer(bot?: any) {
   app.get('/notes',   (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'notes.html')));
   app.get('/tasks',   (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'tasks.html')));
   app.get('/habits',  (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'habits.html')));
-  app.get('/health',  (_req, res) => res.json({ ok: true, version: '6.1.0' }));
+  app.get('/health',  (_req, res) => res.json({ ok: true, version: '7.0.0' }));
+  app.get('/sites',   (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'sites.html')));
+  app.get('/tools-app', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'tools.html')));
+
+  // ── Site viewer — AI-generated websites ──────────────────────────────────
+  app.get('/site/:id', (req, res) => {
+    const id = parseInt(req.params.id);
+    const site = db.prepare('SELECT * FROM websites WHERE id = ?').get(id) as any;
+    if (!site) return res.status(404).send('<h1>Site not found</h1>');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(site.html);
+  });
+
+  // ── API: Websites ─────────────────────────────────────────────────────────
+  app.get('/api/websites', (req, res) => {
+    const uid = getUid(req);
+    if (!uid) return res.status(400).json({ ok: false, error: 'No uid' });
+    const sites = db.prepare('SELECT id, uid, name, created_at FROM websites WHERE uid = ? ORDER BY created_at DESC').all(uid);
+    res.json({ ok: true, data: sites });
+  });
+
+  app.delete('/api/websites/:id', (req, res) => {
+    db.prepare('DELETE FROM websites WHERE id = ?').run(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ── API: Custom Tools ─────────────────────────────────────────────────────
+  app.get('/api/tools', (req, res) => {
+    const uid = getUid(req);
+    if (!uid) return res.status(400).json({ ok: false, error: 'No uid' });
+    const tools = db.prepare('SELECT id, name, description, trigger_pattern, usage_count, active, created_at FROM custom_tools WHERE (uid = ? OR uid = 0) ORDER BY usage_count DESC').all(uid);
+    res.json({ ok: true, data: tools });
+  });
+
+  app.delete('/api/tools/:id', (req, res) => {
+    db.prepare('UPDATE custom_tools SET active = 0 WHERE id = ?').run(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+
 
   // ── API: Finance ─────────────────────────────────────────────────────────
   app.get('/api/finance', (req, res) => {

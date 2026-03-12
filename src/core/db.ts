@@ -3,12 +3,9 @@ import path = require('path');
 import fs = require('fs');
 
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'nexum.db');
-
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const db: any = new (Database as any)(DB_PATH);
-
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -80,7 +77,7 @@ db.exec(`
     category TEXT NOT NULL,
     amount REAL NOT NULL,
     month TEXT NOT NULL,
-    UNIQUE(uid, category, month)
+    created_at TEXT DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS reminders (
@@ -98,7 +95,7 @@ db.exec(`
     uid INTEGER NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
     UNIQUE(uid, key)
   );
 
@@ -111,17 +108,49 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS pc_agents (
-    uid INTEGER PRIMARY KEY,
-    device_id TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    device_name TEXT,
     platform TEXT,
-    ws_id TEXT,
-    last_seen TEXT
+    last_seen TEXT,
+    status TEXT DEFAULT 'offline',
+    created_at TEXT DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS link_codes (
     code TEXT PRIMARY KEY,
-    device_id TEXT NOT NULL,
-    platform TEXT,
+    uid INTEGER NOT NULL,
+    expires_at TEXT NOT NULL,
+    used INTEGER DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS websites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    html TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS custom_tools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    trigger_pattern TEXT NOT NULL,
+    code TEXT NOT NULL,
+    active INTEGER DEFAULT 1,
+    usage_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS tool_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    tool_name TEXT NOT NULL,
+    input TEXT,
+    output TEXT,
+    success INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
   );
 `);

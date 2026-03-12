@@ -1,305 +1,134 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>NEXUM</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{
-  --bg:#000;--bg-el:#1c1c1e;--bg-sec:#2c2c2e;
-  --lbl:#fff;--lbl2:rgba(235,235,245,.6);--lbl3:rgba(235,235,245,.3);
-  --sep:rgba(84,84,88,.65);--fill:rgba(120,120,128,.18);
-  --blue:#0a84ff;--green:#30d158;--yellow:#ffd60a;--red:#ff453a;--orange:#ff9f0a;--purple:#bf5af2;
+:root {
+  --bg:#0d0d0d; --surface:#161616; --border:#222;
+  --accent:#fff; --accent-dim:rgba(255,255,255,.06);
+  --text:#fff; --muted:rgba(255,255,255,.38);
+  --r:18px; --safe-top:env(safe-area-inset-top,0px);
 }
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-html,body{height:100%;background:var(--bg);color:var(--lbl);font-family:-apple-system,'Geist',sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden;}
-::-webkit-scrollbar{display:none;}
-
-.app{min-height:100dvh;max-width:430px;margin:0 auto;padding:0 0 40px;}
-
-/* HEADER */
-.hdr{
-  padding:calc(env(safe-area-inset-top,0px) + 20px) 24px 0;
-  display:flex;align-items:flex-start;justify-content:space-between;
+[data-theme=light] {
+  --bg:#f5f5f5; --surface:#fff; --border:#e8e8e8;
+  --accent:#0d0d0d; --accent-dim:rgba(0,0,0,.04);
+  --text:#0d0d0d; --muted:rgba(0,0,0,.38);
 }
-.hdr-brand{display:flex;flex-direction:column;gap:4px;}
-.logo-row{display:flex;align-items:center;gap:10px;}
-.logo-icon{
-  width:44px;height:44px;background:var(--lbl);border-radius:12px;
-  display:flex;align-items:center;justify-content:center;
-  box-shadow:0 2px 16px rgba(255,255,255,.15);
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{min-height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif}
+
+.header{padding:calc(var(--safe-top) + 32px) 24px 0;text-align:center}
+
+/* SVG logo — exact shape from the brand */
+.logo-svg{display:block;margin:0 auto 16px;width:52px;height:52px}
+.logo-name{font-size:13px;font-weight:500;letter-spacing:5px;color:var(--muted);
+  text-transform:uppercase;margin-bottom:4px}
+.logo-sub{font-size:11px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;
+  opacity:.6}
+
+.theme-btn{position:absolute;top:calc(var(--safe-top) + 20px);right:20px;
+  width:34px;height:34px;border-radius:10px;border:1px solid var(--border);
+  background:var(--surface);cursor:pointer;display:flex;align-items:center;
+  justify-content:center;font-size:16px;transition:opacity .15s}
+.theme-btn:active{opacity:.6}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:36px 20px 32px}
+.card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);padding:24px 20px 22px;
+  cursor:pointer;transition:transform .12s,background .12s;
+  text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:14px;
+  position:relative;overflow:hidden
 }
-.logo-icon svg{width:24px;height:24px;color:var(--bg);}
-.brand-name{font-size:22px;font-weight:800;letter-spacing:-.6px;}
-.brand-sub{font-size:13px;color:var(--lbl2);margin-top:2px;}
-.user-ava{
-  width:40px;height:40px;background:var(--bg-el);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-size:18px;flex-shrink:0;
-}
+.card:active{transform:scale(.97);background:var(--accent-dim)}
+.card-icon{font-size:26px;line-height:1}
+.card-label{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.card-desc{font-size:12px;color:var(--muted);line-height:1.45}
+.card-arrow{position:absolute;top:18px;right:18px;color:var(--muted);font-size:12px}
 
-/* GREETING */
-.greeting{padding:28px 24px 0;}
-.greeting-time{font-size:14px;color:var(--lbl2);margin-bottom:4px;}
-.greeting-title{font-size:30px;font-weight:700;letter-spacing:-.6px;line-height:1.1;}
-
-/* APPS GRID */
-.apps-section{padding:28px 16px 0;}
-.sec-ttl{font-size:13px;font-weight:600;color:var(--lbl2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:16px;padding:0 4px;}
-.apps-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-
-.app-card{
-  background:var(--bg-el);
-  border-radius:22px;
-  padding:20px;
-  cursor:pointer;
-  transition:transform .18s cubic-bezier(.4,0,.2,1), opacity .15s;
-  text-decoration:none;color:inherit;
-  display:flex;flex-direction:column;
-  min-height:150px;
-  position:relative;overflow:hidden;
-}
-.app-card:active{transform:scale(.96);opacity:.85;}
-
-/* Card color accents */
-.app-card::before{
-  content:'';position:absolute;top:-30px;right:-30px;
-  width:100px;height:100px;border-radius:50%;
-  opacity:.12;
-}
-.ac-finance::before{background:var(--green);}
-.ac-notes::before{background:var(--yellow);}
-.ac-tasks::before{background:var(--blue);}
-.ac-habits::before{background:var(--green);}
-
-.app-card-ico{
-  width:52px;height:52px;border-radius:15px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:26px;margin-bottom:auto;
-}
-.ic-finance{background:rgba(48,209,88,.15);}
-.ic-notes{background:rgba(255,214,10,.15);}
-.ic-tasks{background:rgba(10,132,255,.15);}
-.ic-habits{background:rgba(48,209,88,.15);}
-
-.app-card-foot{margin-top:16px;}
-.app-card-name{font-size:17px;font-weight:700;letter-spacing:-.3px;margin-bottom:3px;}
-.app-card-desc{font-size:13px;color:var(--lbl2);line-height:1.3;}
-
-/* WIDE CARD */
-.app-card.wide{grid-column:span 2;}
-
-/* QUICK ACTIONS */
-.quick-section{padding:20px 16px 0;}
-.quick-list{display:flex;flex-direction:column;gap:1px;}
-.quick-item{
-  background:var(--bg-el);
-  display:flex;align-items:center;gap:14px;
-  padding:14px 16px;cursor:pointer;
-  transition:opacity .12s;
-}
-.quick-item:first-child{border-radius:16px 16px 0 0;}
-.quick-item:last-child{border-radius:0 0 16px 16px;}
-.quick-item:only-child{border-radius:16px;}
-.quick-item+.quick-item{border-top:1px solid var(--sep);}
-.quick-item:active{opacity:.7;}
-.qi-ico{
-  width:36px;height:36px;border-radius:10px;
-  display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;
-}
-.qi-inf{flex:1;}
-.qi-ttl{font-size:15px;font-weight:500;}
-.qi-sub{font-size:13px;color:var(--lbl2);margin-top:2px;}
-.qi-arr{color:var(--lbl3);font-size:18px;}
-
-/* STATUS PILL */
-.status-bar{
-  margin:20px 16px 0;
-  background:var(--bg-el);border-radius:16px;
-  padding:16px;
-  display:flex;align-items:center;gap:12px;
-}
-.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;box-shadow:0 0 6px var(--green);}
-.status-txt{font-size:14px;color:var(--lbl2);flex:1;}
-.status-val{font-size:14px;font-weight:600;color:var(--green);}
-
-/* LOADING */
-.ld{display:flex;align-items:center;justify-content:center;min-height:200px;}
-.spin{width:28px;height:28px;border:2.5px solid var(--fill);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
-@keyframes spin{to{transform:rotate(360deg);}}
-
-/* TOAST */
-.toast{position:fixed;top:80px;left:50%;transform:translateX(-50%) translateY(-16px);background:var(--bg-sec);color:var(--lbl);padding:11px 20px;border-radius:20px;font-size:15px;font-weight:500;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:200;opacity:0;transition:all .28s;white-space:nowrap;}
-.toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+.footer{text-align:center;padding-bottom:28px;font-size:11px;
+  color:var(--muted);letter-spacing:2px}
 </style>
 </head>
 <body>
-<div id="toast" class="toast"></div>
-<div class="app">
-
-  <!-- HEADER -->
-  <div class="hdr">
-    <div class="hdr-brand">
-      <div class="logo-row">
-        <div class="logo-icon">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path d="M5 19V5L12 17L19 5V19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <span class="brand-name">NEXUM</span>
-      </div>
-    </div>
-    <div class="user-ava" id="user-ava">👤</div>
+<div style="position:relative">
+  <div class="theme-btn" onclick="toggleTheme()" id="themeBtn">🌙</div>
+  <div class="header">
+    <svg class="logo-svg" viewBox="0 0 52 52" fill="none">
+      <!-- N shape matching the logo exactly -->
+      <rect width="52" height="52" rx="13" fill="var(--accent)"/>
+      <path d="M12 38V14h5.5l13 16V14H36v24h-5.5l-13-16v16H12z"
+            fill="var(--bg)" stroke="none"/>
+    </svg>
+    <div class="logo-name">N E X U M</div>
+    <div class="logo-sub">Autonomous AI Agent</div>
   </div>
-
-  <!-- GREETING -->
-  <div class="greeting">
-    <div class="greeting-time" id="greeting-time">Доброе утро</div>
-    <div class="greeting-title" id="greeting-name">Загружаю...</div>
-  </div>
-
-  <!-- STATUS -->
-  <div class="status-bar">
-    <div class="status-dot"></div>
-    <span class="status-txt">NEXUM AI активен</span>
-    <span class="status-val" id="status-msgs">—</span>
-  </div>
-
-  <!-- APPS -->
-  <div class="apps-section">
-    <div class="sec-ttl">Мои приложения</div>
-    <div class="apps-grid" id="apps-grid">
-      <div class="app-card ac-finance" id="btn-finance" onclick="openApp('finance')">
-        <div class="app-card-ico ic-finance">💰</div>
-        <div class="app-card-foot">
-          <div class="app-card-name">Finance</div>
-          <div class="app-card-desc">Расходы, доходы, бюджеты</div>
-        </div>
-      </div>
-      <div class="app-card ac-notes" id="btn-notes" onclick="openApp('notes')">
-        <div class="app-card-ico ic-notes">📝</div>
-        <div class="app-card-foot">
-          <div class="app-card-name">Notes</div>
-          <div class="app-card-desc">Заметки с поиском</div>
-        </div>
-      </div>
-      <div class="app-card ac-tasks" id="btn-tasks" onclick="openApp('tasks')">
-        <div class="app-card-ico" style="background:rgba(10,132,255,.15)">✅</div>
-        <div class="app-card-foot">
-          <div class="app-card-name">Tasks</div>
-          <div class="app-card-desc">Задачи и проекты</div>
-        </div>
-      </div>
-      <div class="app-card ac-habits" id="btn-habits" onclick="openApp('habits')">
-        <div class="app-card-ico" style="background:rgba(48,209,88,.12)">🎯</div>
-        <div class="app-card-foot">
-          <div class="app-card-name">Habits</div>
-          <div class="app-card-desc">Трекер привычек</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- QUICK ACTIONS -->
-  <div class="quick-section">
-    <div class="sec-ttl" style="padding:0 4px;margin-bottom:14px">Быстрые действия</div>
-    <div class="quick-list">
-      <div class="quick-item" onclick="openApp('finance', 'expense')">
-        <div class="qi-ico" style="background:rgba(255,69,58,.15)">💸</div>
-        <div class="qi-inf">
-          <div class="qi-ttl">Записать расход</div>
-          <div class="qi-sub">Добавить транзакцию</div>
-        </div>
-        <span class="qi-arr">›</span>
-      </div>
-      <div class="quick-item" onclick="openApp('notes', 'new')">
-        <div class="qi-ico" style="background:rgba(255,214,10,.15)">✍️</div>
-        <div class="qi-inf">
-          <div class="qi-ttl">Новая заметка</div>
-          <div class="qi-sub">Быстро записать мысль</div>
-        </div>
-        <span class="qi-arr">›</span>
-      </div>
-      <div class="quick-item" onclick="openApp('tasks', 'new')">
-        <div class="qi-ico" style="background:rgba(10,132,255,.15)">📌</div>
-        <div class="qi-inf">
-          <div class="qi-ttl">Добавить задачу</div>
-          <div class="qi-sub">В список дел</div>
-        </div>
-        <span class="qi-arr">›</span>
-      </div>
-      <div class="quick-item" onclick="openApp('habits')">
-        <div class="qi-ico" style="background:rgba(48,209,88,.12)">🔥</div>
-        <div class="qi-inf">
-          <div class="qi-ttl">Отметить привычки</div>
-          <div class="qi-sub" id="habits-sub">Загрузка...</div>
-        </div>
-        <span class="qi-arr">›</span>
-      </div>
-    </div>
-  </div>
-
 </div>
+
+<div class="grid">
+  <a class="card" href="javascript:void(0)" onclick="go('/')">
+    <div class="card-icon">💰</div>
+    <div>
+      <div class="card-label">Finance</div>
+      <div class="card-desc">Расходы и доходы</div>
+    </div>
+    <span class="card-arrow">›</span>
+  </a>
+  <a class="card" href="javascript:void(0)" onclick="go('/notes')">
+    <div class="card-icon">📝</div>
+    <div>
+      <div class="card-label">Notes</div>
+      <div class="card-desc">Заметки и идеи</div>
+    </div>
+    <span class="card-arrow">›</span>
+  </a>
+  <a class="card" href="javascript:void(0)" onclick="go('/tasks')">
+    <div class="card-icon">✅</div>
+    <div>
+      <div class="card-label">Tasks</div>
+      <div class="card-desc">Задачи</div>
+    </div>
+    <span class="card-arrow">›</span>
+  </a>
+  <a class="card" href="javascript:void(0)" onclick="go('/habits')">
+    <div class="card-icon">🎯</div>
+    <div>
+      <div class="card-label">Habits</div>
+      <div class="card-desc">Привычки</div>
+    </div>
+    <span class="card-arrow">›</span>
+  </a>
+</div>
+
+<div class="footer">NEXUM · 2025</div>
 
 <script>
 const tg = window.Telegram?.WebApp;
-if(tg){tg.ready();tg.expand();tg.setHeaderColor('#000000');tg.setBackgroundColor('#000000');}
+tg?.ready(); tg?.expand();
 
 const p = new URLSearchParams(location.search);
-const UID = p.get('uid')||'0', TOKEN = p.get('token')||'';
-const BASE = location.origin;
+const uid = p.get('uid'), token = p.get('token');
+const q = uid ? `?uid=${uid}&token=${token}` : '';
 
-// Greeting
-function setGreeting() {
-  const h = new Date().getHours();
-  const greet = h<6?'Ночью работаешь?':h<12?'Доброе утро':h<17?'Добрый день':h<21?'Добрый вечер':'Доброй ночи';
-  document.getElementById('greeting-time').textContent = greet;
+// Theme detection: follow Telegram theme
+let dark = true;
+if (tg?.colorScheme) dark = tg.colorScheme === 'dark';
+else dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+applyTheme(dark);
+
+function applyTheme(d) {
+  dark = d;
+  document.documentElement.setAttribute('data-theme', d ? 'dark' : 'light');
+  document.getElementById('themeBtn').textContent = d ? '☀️' : '🌙';
+  tg?.setHeaderColor(d ? '#0d0d0d' : '#f5f5f5');
+  tg?.setBackgroundColor(d ? '#0d0d0d' : '#f5f5f5');
 }
-setGreeting();
-
-// Load user data
-async function loadUser() {
-  try {
-    const r = await fetch(`/api/data?uid=${UID}&token=${TOKEN}`);
-    if(!r.ok) throw new Error();
-    const d = await r.json();
-    document.getElementById('greeting-name').textContent = d.userName || 'Привет!';
-    document.getElementById('status-msgs').textContent = (d.totalMsgs||0) + ' сообщений';
-    if(d.todayHabits !== undefined) {
-      document.getElementById('habits-sub').textContent = `${d.todayDone||0} из ${d.todayHabits||0} выполнено`;
-    }
-  } catch {
-    document.getElementById('greeting-name').textContent = 'Добро пожаловать!';
-    document.getElementById('status-msgs').textContent = '';
-    document.getElementById('habits-sub').textContent = 'Открыть трекер';
-  }
-}
-loadUser();
-
-// Open mini-app
-function openApp(app, action) {
-  if(!TOKEN || TOKEN==='') { toast('Открой через бот: /apps'); return; }
-  const q = `?uid=${UID}&token=${TOKEN}${action?'&action='+action:''}`;
-  const urls = {
-    finance: BASE + q,
-    notes:   BASE + '/notes' + q,
-    tasks:   BASE + '/tasks' + q,
-    habits:  BASE + '/habits' + q,
-  };
-  const url = urls[app];
-  if(!url) return;
-
-  if(tg && tg.openLink) {
-    // Use Telegram's built-in navigation
-    tg.openTelegramLink && tg.openTelegramLink(url);
-  }
-  // Navigate in same webview
-  location.href = url;
-}
-
-function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e.classList.add('on');setTimeout(()=>e.classList.remove('on'),2400);}
+function toggleTheme() { applyTheme(!dark); }
+function go(path) { location.href = path + q; }
 </script>
 </body>
 </html>

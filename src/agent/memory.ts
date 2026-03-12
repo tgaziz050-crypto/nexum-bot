@@ -1,12 +1,18 @@
 import { db } from '../core/db';
 
 export function saveMemory(uid: number, key: string, value: string) {
-  db.prepare(`INSERT INTO memory (uid, key, value) VALUES (?, ?, ?)
-    ON CONFLICT(uid, key) DO UPDATE SET value=excluded.value`).run(uid, key, value);
+  db.prepare(`
+    INSERT INTO memory (uid, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(uid, key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')
+  `).run(uid, key, value);
 }
 
 export function getMemories(uid: number): Array<{ key: string; value: string }> {
-  return db.prepare('SELECT key, value FROM memory WHERE uid = ? ORDER BY created_at DESC LIMIT 20').all(uid) as any;
+  try {
+    return db.prepare('SELECT key, value FROM memory WHERE uid = ? ORDER BY id DESC LIMIT 20').all(uid) as any;
+  } catch {
+    return [];
+  }
 }
 
 export function clearMemory(uid: number) {
@@ -14,15 +20,19 @@ export function clearMemory(uid: number) {
 }
 
 export function saveMessage(uid: number, role: 'user' | 'assistant', content: string) {
-  db.prepare('INSERT INTO conversations (uid, role, content) VALUES (?, ?, ?)').run(uid, role, content);
-  // Keep only last 30 messages
+  db.prepare('INSERT INTO conversations (uid, role, content) VALUES (?, ?, ?)').run(uid, role, content.slice(0, 4000));
+  // Keep last 100 messages per user
   db.prepare(`DELETE FROM conversations WHERE uid = ? AND id NOT IN (
-    SELECT id FROM conversations WHERE uid = ? ORDER BY id DESC LIMIT 30
+    SELECT id FROM conversations WHERE uid = ? ORDER BY id DESC LIMIT 100
   )`).run(uid, uid);
 }
 
 export function getHistory(uid: number, limit = 10): Array<{ role: string; content: string }> {
-  return (db.prepare('SELECT role, content FROM conversations WHERE uid = ? ORDER BY id DESC LIMIT ?').all(uid, limit) as any).reverse();
+  try {
+    return db.prepare('SELECT role, content FROM conversations WHERE uid = ? ORDER BY id DESC LIMIT ?').all(uid, limit).reverse() as any;
+  } catch {
+    return [];
+  }
 }
 
 export function clearHistory(uid: number) {

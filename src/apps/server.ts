@@ -69,11 +69,11 @@ export function startServer(bot?: any) {
   app.get('/api/accounts', (req, res) => {
     const uid = getUid(req);
     if (!uid) return res.status(400).json({ ok: false, error: 'No uid' });
-    let accounts = db.prepare('SELECT * FROM accounts WHERE uid = ? ORDER BY created_at').all(uid) as any[];
+    let accounts = db.prepare('SELECT * FROM accounts WHERE uid = ? ORDER BY id').all(uid) as any[];
     // Auto-create default Cash account
     if (!accounts.length) {
       db.prepare('INSERT INTO accounts (uid, name, currency, balance, icon) VALUES (?, ?, ?, ?, ?)').run(uid, 'Cash', 'UZS', 0, '💵');
-      accounts = db.prepare('SELECT * FROM accounts WHERE uid = ? ORDER BY created_at').all(uid) as any[];
+      accounts = db.prepare('SELECT * FROM accounts WHERE uid = ? ORDER BY id').all(uid) as any[];
     }
     res.json({ ok: true, data: accounts });
   });
@@ -102,7 +102,7 @@ export function startServer(bot?: any) {
     else if (period === 'week') { const d = new Date(now); d.setDate(d.getDate()-7); since = d.toISOString().split('T')[0]; }
     else if (period === 'year') since = `${now.getFullYear()}-01-01`;
     else since = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-    const txs = db.prepare(`SELECT * FROM finance WHERE uid = ? AND date(created_at) >= ? ORDER BY created_at DESC`).all(uid, since);
+    const txs = db.prepare(`SELECT * FROM finance WHERE uid = ? AND (date(created_at) >= ? OR created_at IS NULL) ORDER BY id DESC`).all(uid, since);
     res.json({ ok: true, data: txs });
   });
 
@@ -155,7 +155,7 @@ export function startServer(bot?: any) {
   app.get('/api/tasks', (req, res) => {
     const uid = getUid(req);
     if (!uid) return res.status(400).json({ ok: false, error: 'No uid' });
-    const tasks = db.prepare(`SELECT * FROM tasks WHERE uid = ? ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC`).all(uid);
+    const tasks = db.prepare(`SELECT * FROM tasks WHERE uid = ? ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id DESC`).all(uid);
     res.json({ ok: true, data: tasks });
   });
 
@@ -182,7 +182,7 @@ export function startServer(bot?: any) {
   app.get('/api/habits', (req, res) => {
     const uid = getUid(req);
     if (!uid) return res.status(400).json({ ok: false, error: 'No uid' });
-    const habits = db.prepare('SELECT * FROM habits WHERE uid = ? ORDER BY created_at').all(uid) as any[];
+    const habits = db.prepare('SELECT * FROM habits WHERE uid = ? ORDER BY id').all(uid) as any[];
     const today = new Date().toISOString().split('T')[0];
     const result = habits.map((h: any) => {
       const logs = db.prepare(`SELECT date(done_at) as d FROM habit_logs WHERE habit_id = ? AND done_at >= date('now','-30 days') GROUP BY date(done_at)`).all(h.id).map((r: any) => r.d);
@@ -230,7 +230,7 @@ export function startServer(bot?: any) {
   app.get('/api/websites', (req, res) => {
     const uid = getUid(req);
     if (!uid) return res.status(400).json({ ok: false, error: 'No uid' });
-    const sites = db.prepare('SELECT id, uid, name, created_at FROM websites WHERE uid = ? ORDER BY created_at DESC').all(uid);
+    const sites = db.prepare('SELECT id, uid, name, created_at FROM websites WHERE uid = ? ORDER BY id DESC').all(uid);
     res.json({ ok: true, data: sites });
   });
 

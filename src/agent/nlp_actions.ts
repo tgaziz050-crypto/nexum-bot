@@ -99,7 +99,7 @@ export async function processNlpAction(uid: number, text: string): Promise<Actio
       if (amount > 0) {
         const category = detectCategory(text);
         // Get first account or null
-        const acct = db.prepare('SELECT id FROM accounts WHERE uid = ? ORDER BY created_at LIMIT 1').get(uid) as any;
+        const acct = db.prepare('SELECT id FROM accounts WHERE uid = ? ORDER BY id LIMIT 1').get(uid) as any;
         db.prepare('INSERT INTO finance (uid, type, amount, category, note, account_id) VALUES (?, ?, ?, ?, ?, ?)').run(uid, 'expense', amount, category, text.substring(0, 200), acct?.id || null);
         if (acct?.id) db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?').run(amount, acct.id);
         return {
@@ -119,7 +119,7 @@ export async function processNlpAction(uid: number, text: string): Promise<Actio
       const amount = numMatch ? parseAmount(numMatch[1]) : 0;
       if (amount > 0) {
         const category = detectCategory(text);
-        const acct = db.prepare('SELECT id FROM accounts WHERE uid = ? ORDER BY created_at LIMIT 1').get(uid) as any;
+        const acct = db.prepare('SELECT id FROM accounts WHERE uid = ? ORDER BY id LIMIT 1').get(uid) as any;
         db.prepare('INSERT INTO finance (uid, type, amount, category, note, account_id) VALUES (?, ?, ?, ?, ?, ?)').run(uid, 'income', amount, category, text.substring(0, 200), acct?.id || null);
         if (acct?.id) db.prepare('UPDATE accounts SET balance = balance + ? WHERE id = ?').run(amount, acct.id);
         return {

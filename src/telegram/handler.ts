@@ -511,7 +511,7 @@ export function setupHandlers(bot: Bot) {
   // /tasks
   bot.command('tasks', async (ctx) => {
     const uid = ctx.from!.id;
-    const tasks = db.prepare(`SELECT * FROM tasks WHERE uid = ? AND status != 'done' ORDER BY priority DESC, created_at DESC LIMIT 10`).all(uid) as any[];
+    const tasks = db.prepare(`SELECT * FROM tasks WHERE uid = ? AND status != 'done' ORDER BY priority DESC, id DESC LIMIT 10`).all(uid) as any[];
     if (!tasks.length) return ctx.reply('✅ Задач нет. Скажи "создай задачу..."', {
       reply_markup: { inline_keyboard: [[{ text: '✅ Открыть задачи', web_app: { url: `${config.webappUrl}/tasks` } }]] }
     });
@@ -540,7 +540,7 @@ export function setupHandlers(bot: Bot) {
   bot.command('finance', async (ctx) => {
     const uid = ctx.from!.id;
     const month = new Date().toISOString().substring(0, 7);
-    const stats = db.prepare(`SELECT type, SUM(amount) as total FROM finance WHERE uid = ? AND created_at >= ? GROUP BY type`).all(uid, `${month}-01`) as any[];
+    const stats = db.prepare(`SELECT type, SUM(amount) as total FROM finance WHERE uid = ? AND (created_at >= ? OR created_at IS NULL) GROUP BY type`).all(uid, `${month}-01`) as any[];
     const income = stats.find(s => s.type === 'income')?.total || 0;
     const expense = stats.find(s => s.type === 'expense')?.total || 0;
     const balance = income - expense;

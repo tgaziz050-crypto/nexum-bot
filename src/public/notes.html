@@ -2,6 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27black%27/%3E%3Cpath%20d%3D%27M6%2027L6%205C6%205%207%204%208%204L11%204C12%204%2013%205%2013%205L13%2017L19%205C20%204%2021%204%2022%204L24%204C25%204%2026%205%2026%205L26%2027C26%2027%2025%2028%2024%2028L21%2028C20%2028%2019%2027%2019%2027L19%2015L13%2027C12%2028%2011%2028%2010%2028L8%2028C7%2028%206%2027%206%2027Z%27%20fill%3D%27white%27/%3E%3C/svg%3E">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>NEXUM Notes</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -12,7 +13,7 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:var(--fon
 ::-webkit-scrollbar{display:none;}
 .hdr{padding:16px 20px 12px;display:flex;align-items:center;justify-content:space-between;}
 .nx{width:30px;height:30px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-right:10px;}
-.nx svg{width:18px;height:18px;}
+.nx svg{width:20px;height:20px;}
 .hdr-left{display:flex;align-items:center;}
 .hdr-title{font-size:18px;font-weight:700;letter-spacing:-0.5px;}
 .fab{position:fixed;bottom:30px;right:20px;width:52px;height:52px;background:#fff;border-radius:50%;border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,0,0,0.5);cursor:pointer;z-index:100;font-size:24px;}
@@ -49,7 +50,7 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:var(--fon
 <body>
 <div class="hdr">
   <div class="hdr-left">
-    <div class="nx"><svg viewBox="0 0 22 22" fill="none"><path d="M4 18L9 4L11.5 10L15 4L18 18" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div class="nx"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path d="M11 88 L11 16 C11 13 13 10 16 10 L30 10 C33 10 35 12 35 15 L35 50 L65 15 C67 12 69 10 72 10 L84 10 C87 10 89 12 89 15 L89 85 C89 88 87 90 84 90 L70 90 C67 90 65 88 65 85 L65 50 L35 85 C33 88 31 90 28 90 L16 90 C13 90 11 88 11 88 Z" fill="currentColor"/></svg></div>
     <span class="hdr-title" id="t-title">Заметки</span>
   </div>
   <button class="icon-btn" onclick="openSheet(null)" style="background:var(--bg3);border:none;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;color:#fff;">＋</button>

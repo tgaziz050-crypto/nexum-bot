@@ -167,10 +167,62 @@ db.exec(`
   );
 `);
 
-// Migrate: add account_id/currency columns if missing
-try { db.exec(`ALTER TABLE finance ADD COLUMN account_id INTEGER`); } catch {}
-try { db.exec(`ALTER TABLE finance ADD COLUMN currency TEXT DEFAULT 'UZS'`); } catch {}
-try { db.exec(`ALTER TABLE pc_agents ADD COLUMN device_name TEXT`); } catch {}
+// ── Safe migrations — add missing columns to existing tables ──────────────────
+const migrations = [
+  // finance
+  `ALTER TABLE finance ADD COLUMN account_id INTEGER`,
+  `ALTER TABLE finance ADD COLUMN currency TEXT DEFAULT 'UZS'`,
+  `ALTER TABLE finance ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // accounts
+  `ALTER TABLE accounts ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // notes
+  `ALTER TABLE notes ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE notes ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE notes ADD COLUMN pinned INTEGER DEFAULT 0`,
+  // tasks
+  `ALTER TABLE tasks ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE tasks ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE tasks ADD COLUMN status TEXT DEFAULT 'todo'`,
+  `ALTER TABLE tasks ADD COLUMN priority TEXT DEFAULT 'medium'`,
+  `ALTER TABLE tasks ADD COLUMN project TEXT DEFAULT 'General'`,
+  // habits
+  `ALTER TABLE habits ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE habits ADD COLUMN streak INTEGER DEFAULT 0`,
+  `ALTER TABLE habits ADD COLUMN best_streak INTEGER DEFAULT 0`,
+  // habit_logs
+  `ALTER TABLE habit_logs ADD COLUMN done_at TEXT DEFAULT (datetime('now'))`,
+  // conversations
+  `ALTER TABLE conversations ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // memory
+  `ALTER TABLE memory ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))`,
+  // reminders
+  `ALTER TABLE reminders ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // websites
+  `ALTER TABLE websites ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // custom_tools
+  `ALTER TABLE custom_tools ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE custom_tools ADD COLUMN active INTEGER DEFAULT 1`,
+  `ALTER TABLE custom_tools ADD COLUMN usage_count INTEGER DEFAULT 0`,
+  // pc_agents
+  `ALTER TABLE pc_agents ADD COLUMN device_name TEXT`,
+  `ALTER TABLE pc_agents ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // users
+  `ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  `ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))`,
+];
+
+for (const sql of migrations) {
+  try { db.exec(sql); } catch { /* column already exists — ignore */ }
+}
+
+// Fix NULL created_at values in existing rows
+const tablesToFix = ['finance', 'notes', 'tasks', 'habits', 'habit_logs', 'conversations',
+  'websites', 'custom_tools', 'accounts', 'reminders', 'users', 'pc_agents'];
+for (const tbl of tablesToFix) {
+  try {
+    db.exec(`UPDATE ${tbl} SET created_at = datetime('now') WHERE created_at IS NULL`);
+  } catch { /* table might not exist yet */ }
+}
 
 export function ensureUser(uid: number, username?: string, firstName?: string) {
   db.prepare(`

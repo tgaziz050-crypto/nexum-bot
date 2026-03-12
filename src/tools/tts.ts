@@ -6,8 +6,8 @@ import os from 'os';
 
 const execAsync = promisify(exec);
 
-// Microsoft Neural voices — 400+ voices, 50+ languages, completely free
-const EDGE_VOICE_MAP: Record<string, string> = {
+// Microsoft Neural voices — полностью бесплатно, 50+ языков
+const VOICE_MAP: Record<string, string> = {
   ru: 'ru-RU-SvetlanaNeural',
   en: 'en-US-AriaNeural',
   uz: 'uz-UZ-MadinaNeural',
@@ -21,32 +21,13 @@ const EDGE_VOICE_MAP: Record<string, string> = {
   ja: 'ja-JP-NanamiNeural',
   ko: 'ko-KR-SunHiNeural',
   tr: 'tr-TR-EmelNeural',
-  pl: 'pl-PL-ZofiaNeural',
   uk: 'uk-UA-PolinaNeural',
-  nl: 'nl-NL-ColetteNeural',
-  sv: 'sv-SE-SofieNeural',
-  da: 'da-DK-ChristelNeural',
-  fi: 'fi-FI-NooraNeural',
-  cs: 'cs-CZ-VlastaNeural',
-  ro: 'ro-RO-AlinaNeural',
-  hu: 'hu-HU-NoemiNeural',
-  el: 'el-GR-AthinaNeural',
-  bg: 'bg-BG-KalinaNeural',
-  vi: 'vi-VN-HoaiMyNeural',
-  th: 'th-TH-PremwadeeNeural',
-  hi: 'hi-IN-SwaraNeural',
-  id: 'id-ID-GadisNeural',
-  ms: 'ms-MY-YasminNeural',
-  he: 'he-IL-HilaNeural',
-  fa: 'fa-IR-DilaraNeural',
   kk: 'kk-KZ-AigulNeural',
-  az: 'az-AZ-BanuNeural',
-  ka: 'ka-GE-EkaNeural',
-  bn: 'bn-BD-NabanitaNeural',
-  ta: 'ta-IN-PallaviNeural',
-  ur: 'ur-PK-UzmaNeural',
-  sw: 'sw-KE-ZuriNeural',
-  af: 'af-ZA-AdriNeural',
+  pl: 'pl-PL-ZofiaNeural',
+  hi: 'hi-IN-SwaraNeural',
+  he: 'he-IL-HilaNeural',
+  th: 'th-TH-PremwadeeNeural',
+  vi: 'vi-VN-HoaiMyNeural',
 };
 
 export function detectLanguage(text: string): string {
@@ -55,31 +36,23 @@ export function detectLanguage(text: string): string {
     if (/қ|ғ|ү|ұ|ң|ө|ә/.test(text)) return 'kk';
     return 'ru';
   }
-  if (/[\u0600-\u06FF]/.test(text)) {
-    if (/\u0698/.test(text)) return 'fa';
-    return 'ar';
-  }
+  if (/[\u0600-\u06FF]/.test(text)) return 'ar';
   if (/[\u4E00-\u9FFF]/.test(text)) return 'zh';
   if (/[\u3040-\u30FF]/.test(text)) return 'ja';
   if (/[\uAC00-\uD7AF]/.test(text)) return 'ko';
   if (/[\u0900-\u097F]/.test(text)) return 'hi';
-  if (/[\u0980-\u09FF]/.test(text)) return 'bn';
-  if (/[\u0B80-\u0BFF]/.test(text)) return 'ta';
-  if (/[\u10A0-\u10FF]/.test(text)) return 'ka';
   if (/[\u0590-\u05FF]/.test(text)) return 'he';
   if (/[\u0E00-\u0E7F]/.test(text)) return 'th';
-  const lower = text.toLowerCase();
-  if (/\b(ich|und|der|die|das|nicht|ist)\b/.test(lower)) return 'de';
-  if (/\b(je|tu|il|nous|vous|et|un|une|est)\b/.test(lower)) return 'fr';
-  if (/\b(yo|tú|él|que|con|por|una|los)\b/.test(lower)) return 'es';
-  if (/\b(io|tu|lui|che|con|per|una)\b/.test(lower)) return 'it';
-  if (/\b(eu|você|ele|que|com|por|uma)\b/.test(lower)) return 'pt';
-  if (/\b(bir|bu|ve|için|ile|ne|biz)\b/.test(lower)) return 'tr';
-  if (/\b(siz|bu|va|men|biz|uchun)\b/.test(lower)) return 'uz';
+  const l = text.toLowerCase();
+  if (/\b(ich|und|der|die|das|nicht)\b/.test(l)) return 'de';
+  if (/\b(je|tu|il|nous|vous|est)\b/.test(l)) return 'fr';
+  if (/\b(yo|tú|él|que|con|los)\b/.test(l)) return 'es';
+  if (/\b(bir|bu|ve|için|ile)\b/.test(l)) return 'tr';
+  if (/\b(siz|bu|va|men|uchun)\b/.test(l)) return 'uz';
   return 'en';
 }
 
-function cleanForTTS(text: string): string {
+function cleanText(text: string): string {
   return text
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
@@ -100,57 +73,66 @@ export interface TTSResult {
   lang: string;
 }
 
+// Путь к edge-tts CLI (из env или дефолт)
+function getEdgeTTSPath(): string {
+  return process.env.EDGE_TTS_PATH || 'edge-tts';
+}
+
 export async function textToSpeech(text: string): Promise<TTSResult> {
-  const clean = cleanForTTS(text);
+  const clean = cleanText(text);
   if (!clean) throw new Error('Empty text');
 
-  const lang = detectLanguage(clean);
-  const voice = EDGE_VOICE_MAP[lang] || EDGE_VOICE_MAP['en'];
-
-  const tmpFile = path.join(os.tmpdir(), `nexum_tts_${Date.now()}.mp3`);
-
-  // Escape text safely for Python string
-  const escaped = clean
-    .replace(/\\/g, '\\\\')
-    .replace(/"""/g, '\\"\\"\\"')
-    .replace(/\r?\n/g, ' ');
-
-  const script = `
-import asyncio
-import edge_tts
-
-async def main():
-    communicate = edge_tts.Communicate(text="""${escaped}""", voice="${voice}")
-    await communicate.save("${tmpFile}")
-
-asyncio.run(main())
-`.trim();
+  const lang  = detectLanguage(clean);
+  const voice = VOICE_MAP[lang] || VOICE_MAP['en'];
+  const outFile = path.join(os.tmpdir(), `nx_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.mp3`);
+  const txtFile = path.join(os.tmpdir(), `nx_txt_${Date.now()}.txt`);
 
   try {
-    await execAsync(`python3 -c '${script.replace(/'/g, "'\\''")}' `, { timeout: 30000 });
-    const buf = await fs.readFile(tmpFile);
-    await fs.unlink(tmpFile).catch(() => {});
-    console.log(`[tts] edge voice=${voice} lang=${lang} len=${clean.length}`);
-    return { buffer: buf, format: 'mp3', provider: 'edge-tts', lang };
-  } catch (err: any) {
-    await fs.unlink(tmpFile).catch(() => {});
-    // Retry with simpler python call
-    const tmpFile2 = path.join(os.tmpdir(), `nexum_tts2_${Date.now()}.mp3`);
-    const textFile = path.join(os.tmpdir(), `nexum_txt_${Date.now()}.txt`);
-    await fs.writeFile(textFile, clean, 'utf8');
+    // Записываем текст в файл (избегаем проблем с кавычками в shell)
+    await fs.writeFile(txtFile, clean, 'utf8');
+
+    const edgeBin = getEdgeTTSPath();
+
+    // Метод 1: edge-tts CLI напрямую (самый надёжный)
     try {
       await execAsync(
-        `python3 -c "import asyncio,edge_tts; asyncio.run(edge_tts.Communicate(open('${textFile}').read(), '${voice}').save('${tmpFile2}'))"`,
+        `${edgeBin} --voice "${voice}" --file "${txtFile}" --write-media "${outFile}"`,
         { timeout: 30000 }
       );
-      const buf = await fs.readFile(tmpFile2);
-      await fs.unlink(tmpFile2).catch(() => {});
-      await fs.unlink(textFile).catch(() => {});
-      return { buffer: buf, format: 'mp3', provider: 'edge-tts', lang };
-    } catch (err2: any) {
-      await fs.unlink(tmpFile2).catch(() => {});
-      await fs.unlink(textFile).catch(() => {});
-      throw new Error(`Edge-TTS failed: ${err2.message}`);
+      const buf = await fs.readFile(outFile);
+      console.log(`[tts] ✅ CLI voice=${voice} lang=${lang} bytes=${buf.length}`);
+      return { buffer: buf, format: 'mp3', provider: 'edge-tts-cli', lang };
+    } catch (cliErr: any) {
+      console.warn('[tts] CLI failed:', cliErr.message?.slice(0, 100));
     }
+
+    // Метод 2: через Python venv (fallback)
+    const pythonBin = process.env.EDGE_PYTHON_PATH || '/opt/edge-tts-env/bin/python3';
+    const pyScript = `
+import asyncio, edge_tts, sys
+
+async def run():
+    text = open(sys.argv[1], encoding='utf-8').read()
+    await edge_tts.Communicate(text, sys.argv[2]).save(sys.argv[3])
+
+asyncio.run(run())
+`.trim();
+
+    const pyFile = path.join(os.tmpdir(), `nx_tts_script_${Date.now()}.py`);
+    await fs.writeFile(pyFile, pyScript, 'utf8');
+
+    await execAsync(
+      `${pythonBin} "${pyFile}" "${txtFile}" "${voice}" "${outFile}"`,
+      { timeout: 30000 }
+    );
+    await fs.unlink(pyFile).catch(() => {});
+
+    const buf = await fs.readFile(outFile);
+    console.log(`[tts] ✅ Python voice=${voice} lang=${lang} bytes=${buf.length}`);
+    return { buffer: buf, format: 'mp3', provider: 'edge-tts-python', lang };
+
+  } finally {
+    await fs.unlink(outFile).catch(() => {});
+    await fs.unlink(txtFile).catch(() => {});
   }
 }

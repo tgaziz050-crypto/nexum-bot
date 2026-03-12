@@ -1,4 +1,4 @@
-import { config } from '../core/config.ts';
+import { config } from '../core/config';
 
 export async function webSearch(query: string): Promise<string> {
   const key = config.serper[0];

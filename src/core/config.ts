@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
 function getKeys(prefix: string): string[] {
   const keys: string[] = [];
@@ -28,13 +29,10 @@ export const config = {
   },
 
   serper: getKeys('SERPER_KEY'),
-
-  voiceMode: process.env.VOICE_MODE || 'auto', // auto | always | never
-
+  voiceMode: process.env.VOICE_MODE || 'auto',
   wsPort: parseInt(process.env.WS_PORT || '18790'),
 };
 
-// Rotate through keys
 const rotations: Record<string, number> = {};
 export function getKey(provider: keyof typeof config.ai): string | null {
   const keys = config.ai[provider];
@@ -42,16 +40,4 @@ export function getKey(provider: keyof typeof config.ai): string | null {
   const idx = (rotations[provider] || 0) % keys.length;
   rotations[provider] = idx + 1;
   return keys[idx];
-}
-
-export function getAnyKey(): { key: string; provider: string } | null {
-  const order: (keyof typeof config.ai)[] = [
-    'cerebras', 'groq', 'gemini', 'grok', 'sambanova',
-    'together', 'openrouter', 'deepseek', 'claude'
-  ];
-  for (const p of order) {
-    const k = getKey(p);
-    if (k) return { key: k, provider: p };
-  }
-  return null;
 }

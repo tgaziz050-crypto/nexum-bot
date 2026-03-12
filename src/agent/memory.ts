@@ -1,4 +1,4 @@
-import { db } from '../core/db.ts';
+import { db } from '../core/db';
 
 export function saveMemory(uid: number, key: string, value: string) {
   db.prepare(`INSERT INTO memory (uid, key, value) VALUES (?, ?, ?)

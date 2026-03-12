@@ -1,5 +1,6 @@
-import FormData from 'form-data';
-import { getKey } from '../core/config.ts';
+import { getKey } from '../core/config';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const FormData = require('form-data');
 
 export async function transcribeVoice(audioBuffer: Buffer, filename = 'voice.ogg'): Promise<string> {
   const key = getKey('groq');
@@ -10,10 +11,14 @@ export async function transcribeVoice(audioBuffer: Buffer, filename = 'voice.ogg
   form.append('model', 'whisper-large-v3-turbo');
   form.append('response_format', 'text');
 
+  // Use node-fetch v2 (CommonJS)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fetch = require('node-fetch');
+
   const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, ...form.getHeaders() },
-    body: form as any
+    body: form
   });
 
   if (!r.ok) {

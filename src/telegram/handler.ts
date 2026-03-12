@@ -1,11 +1,11 @@
 import { Bot, Context, InputFile } from 'grammy';
-import { config } from '../core/config.ts';
-import { db, ensureUser } from '../core/db.ts';
-import { execute } from '../agent/executor.ts';
-import { transcribeVoice } from '../tools/stt.ts';
-import { textToSpeech } from '../tools/tts.ts';
-import { webSearch } from '../tools/search.ts';
-import { getMemories, clearMemory, clearHistory } from '../agent/memory.ts';
+import { config } from '../core/config';
+import { db, ensureUser } from '../core/db';
+import { execute } from '../agent/executor';
+import { transcribeVoice } from '../tools/stt';
+import { textToSpeech } from '../tools/tts';
+import { webSearch } from '../tools/search';
+import { getMemories, clearMemory, clearHistory } from '../agent/memory';
 
 // Per-user voice mode cache: uid → 'auto' | 'always' | 'never'
 const userVoiceMode = new Map<number, string>();

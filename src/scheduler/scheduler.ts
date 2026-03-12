@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { db } from '../core/db.ts';
+import { db } from '../core/db';
 import { Bot } from 'grammy';
 
 export function startScheduler(bot: Bot) {

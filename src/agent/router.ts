@@ -1,4 +1,4 @@
-import { config, getKey } from '../core/config.ts';
+import { config, getKey } from '../core/config';
 
 export interface Message { role: 'user' | 'assistant' | 'system'; content: string | any[]; }
 

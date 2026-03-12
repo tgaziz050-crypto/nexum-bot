@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>NEXUM — Hub</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Syne+Mono&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: rgba(255,255,255,0.07);
+    --accent: #7c6ef7;
+    --accent2: #f76eb2;
+    --accent3: #6ef7c4;
+    --text: #f0f0f8;
+    --muted: #6b6b80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px 16px 40px;
+    overflow-x: hidden;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  .logo {
+    width: 44px; height: 44px;
+    background: var(--accent);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 800; color: #fff;
+    flex-shrink: 0;
+  }
+  .header-text h1 { font-size: 22px; font-weight: 800; }
+  .header-text p { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 20px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    display: block;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .card:active { transform: scale(0.96); }
+  .card:hover::before { opacity: 1; }
+
+  .card.finance::before { background: radial-gradient(circle at top left, rgba(124,110,247,0.15), transparent 70%); }
+  .card.notes::before   { background: radial-gradient(circle at top left, rgba(247,110,178,0.15), transparent 70%); }
+  .card.tasks::before   { background: radial-gradient(circle at top left, rgba(110,247,196,0.15), transparent 70%); }
+  .card.habits::before  { background: radial-gradient(circle at top left, rgba(247,196,110,0.15), transparent 70%); }
+
+  .card-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+    display: block;
+  }
+  .card-title {
+    font-size: 15px; font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .card-desc {
+    font-size: 12px; color: var(--muted);
+    line-height: 1.4;
+  }
+  .card-badge {
+    position: absolute;
+    top: 14px; right: 14px;
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-family: 'Syne Mono', monospace;
+    color: var(--muted);
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 24px 0;
+  }
+
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  .quick-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .quick-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: 'Syne', sans-serif;
+    color: var(--text);
+    text-align: left;
+    width: 100%;
+  }
+  .quick-btn:active { background: var(--surface2); transform: scale(0.98); }
+  .quick-icon { font-size: 20px; flex-shrink: 0; }
+  .quick-label { font-size: 14px; font-weight: 600; }
+  .quick-sub { font-size: 12px; color: var(--muted); }
+  .quick-arrow { margin-left: auto; color: var(--muted); font-size: 16px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">N</div>
+  <div class="header-text">
+    <h1>NEXUM</h1>
+    <p>Твой AI-агент</p>
+  </div>
+</div>
+
+<p class="section-title">Приложения</p>
+<div class="grid">
+  <a class="card finance" href="/finance" onclick="openApp('/finance', event)">
+    <span class="card-icon">💰</span>
+    <div class="card-title">Финансы</div>
+    <div class="card-desc">Расходы, доходы и бюджет</div>
+  </a>
+  <a class="card notes" href="/notes" onclick="openApp('/notes', event)">
+    <span class="card-icon">📝</span>
+    <div class="card-title">Заметки</div>
+    <div class="card-desc">Записи и идеи</div>
+  </a>
+  <a class="card tasks" href="/tasks" onclick="openApp('/tasks', event)">
+    <span class="card-icon">✅</span>
+    <div class="card-title">Задачи</div>
+    <div class="card-desc">Проекты и дела</div>
+  </a>
+  <a class="card habits" href="/habits" onclick="openApp('/habits', event)">
+    <span class="card-icon">🎯</span>
+    <div class="card-title">Привычки</div>
+    <div class="card-desc">Стрики и прогресс</div>
+  </a>
+</div>
+
+<div class="divider"></div>
+
+<p class="section-title">Быстрые действия</p>
+<div class="quick-actions">
+  <button class="quick-btn" onclick="sendToBot('/notes')">
+    <span class="quick-icon">📝</span>
+    <div>
+      <div class="quick-label">Новая заметка</div>
+      <div class="quick-sub">Быстро записать идею</div>
+    </div>
+    <span class="quick-arrow">›</span>
+  </button>
+  <button class="quick-btn" onclick="sendToBot('/tasks')">
+    <span class="quick-icon">✅</span>
+    <div>
+      <div class="quick-label">Новая задача</div>
+      <div class="quick-sub">Добавить в список дел</div>
+    </div>
+    <span class="quick-arrow">›</span>
+  </button>
+  <button class="quick-btn" onclick="sendToBot('/finance')">
+    <span class="quick-icon">💸</span>
+    <div>
+      <div class="quick-label">Записать расход</div>
+      <div class="quick-sub">Добавить транзакцию</div>
+    </div>
+    <span class="quick-arrow">›</span>
+  </button>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#0a0a0f');
+    tg.setBackgroundColor('#0a0a0f');
+  }
+
+  function openApp(path, e) {
+    e.preventDefault();
+    window.location.href = path;
+  }
+
+  function sendToBot(cmd) {
+    if (tg) {
+      tg.sendData(cmd);
+      tg.close();
+    }
+  }
+</script>
+</body>
+</html>

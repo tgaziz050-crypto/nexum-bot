@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>NEXUM — Финансы</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Syne+Mono&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: rgba(255,255,255,0.07);
+    --accent: #7c6ef7;
+    --green: #4ade80;
+    --red: #f87171;
+    --text: #f0f0f8;
+    --muted: #6b6b80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Syne', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding-bottom: 40px; }
+
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .back-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; padding: 0 4px; }
+  .header h1 { font-size: 18px; font-weight: 700; }
+
+  .balance-card {
+    margin: 16px;
+    background: linear-gradient(135deg, #1a1540 0%, #12121a 100%);
+    border: 1px solid rgba(124,110,247,0.3);
+    border-radius: 20px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  .balance-card::before {
+    content: '';
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 150px; height: 150px;
+    background: radial-gradient(circle, rgba(124,110,247,0.2), transparent 70%);
+  }
+  .balance-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .balance-amount { font-size: 36px; font-weight: 800; font-family: 'Syne Mono'; margin: 8px 0; }
+  .balance-amount.positive { color: var(--green); }
+  .balance-amount.negative { color: var(--red); }
+  .balance-stats {
+    display: flex; gap: 24px; margin-top: 16px;
+  }
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat-label { font-size: 11px; color: var(--muted); }
+  .stat-val { font-size: 16px; font-weight: 700; font-family: 'Syne Mono'; }
+  .stat-val.inc { color: var(--green); }
+  .stat-val.exp { color: var(--red); }
+
+  .add-buttons {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin: 0 16px 16px;
+  }
+  .add-btn {
+    padding: 14px; border: none; border-radius: 14px;
+    font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700;
+    cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .add-btn.income { background: rgba(74,222,128,0.15); color: var(--green); border: 1px solid rgba(74,222,128,0.3); }
+  .add-btn.expense { background: rgba(248,113,113,0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.3); }
+  .add-btn:active { transform: scale(0.96); }
+
+  .section-title {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted);
+    padding: 0 16px; margin-bottom: 10px;
+  }
+
+  .transactions {
+    padding: 0 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .tx {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .tx-icon {
+    width: 40px; height: 40px;
+    border-radius: 12px; background: var(--surface2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; flex-shrink: 0;
+  }
+  .tx-info { flex: 1; }
+  .tx-cat { font-size: 14px; font-weight: 600; }
+  .tx-note { font-size: 12px; color: var(--muted); }
+  .tx-date { font-size: 11px; color: var(--muted); }
+  .tx-amount { font-family: 'Syne Mono'; font-size: 15px; font-weight: 700; }
+  .tx-amount.inc { color: var(--green); }
+  .tx-amount.exp { color: var(--red); }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: flex-end;
+    z-index: 100;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal {
+    background: var(--surface);
+    border-radius: 24px 24px 0 0;
+    padding: 24px;
+    width: 100%;
+    transform: translateY(100%);
+    transition: transform 0.3s ease;
+  }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+  .form-group { margin-bottom: 16px; }
+  .form-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block; }
+  .form-input {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px;
+    font-family: 'Syne Mono', sans-serif; font-size: 16px; color: var(--text);
+    outline: none;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .form-select {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px;
+    font-family: 'Syne', sans-serif; font-size: 14px; color: var(--text);
+    outline: none; appearance: none;
+  }
+  .submit-btn {
+    width: 100%; padding: 16px; border: none; border-radius: 14px;
+    background: var(--accent); color: #fff;
+    font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700;
+    cursor: pointer; margin-top: 8px;
+  }
+  .submit-btn:active { opacity: 0.8; }
+
+  .empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <button class="back-btn" onclick="history.back()">‹</button>
+  <h1>💰 Финансы</h1>
+</div>
+
+<div class="balance-card">
+  <div class="balance-label">Баланс за месяц</div>
+  <div class="balance-amount" id="balance">+0</div>
+  <div class="balance-stats">
+    <div class="stat">
+      <div class="stat-label">↑ Доходы</div>
+      <div class="stat-val inc" id="income-total">0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">↓ Расходы</div>
+      <div class="stat-val exp" id="expense-total">0</div>
+    </div>
+  </div>
+</div>
+
+<div class="add-buttons">
+  <button class="add-btn income" onclick="openModal('income')">+ Доход</button>
+  <button class="add-btn expense" onclick="openModal('expense')">− Расход</button>
+</div>
+
+<p class="section-title">Транзакции</p>
+<div class="transactions" id="transactions-list">
+  <div class="empty"><div class="empty-icon">💳</div><p>Транзакций нет</p></div>
+</div>
+
+<!-- Add Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">Новый доход</div>
+    <div class="form-group">
+      <label class="form-label">Сумма</label>
+      <input class="form-input" type="number" id="input-amount" placeholder="0" inputmode="decimal">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Категория</label>
+      <select class="form-select" id="input-category">
+        <option value="Food">🍕 Еда</option>
+        <option value="Transport">🚗 Транспорт</option>
+        <option value="Entertainment">🎭 Развлечения</option>
+        <option value="Clothing">👗 Одежда</option>
+        <option value="Bills">📱 Счета</option>
+        <option value="Health">💊 Здоровье</option>
+        <option value="Income">💼 Доход</option>
+        <option value="Salary">💰 Зарплата</option>
+        <option value="Other">📦 Другое</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Заметка (необязательно)</label>
+      <input class="form-input" type="text" id="input-note" placeholder="За что?">
+    </div>
+    <button class="submit-btn" onclick="submitTransaction()">Сохранить</button>
+    <button style="width:100%;padding:12px;margin-top:8px;background:none;border:none;color:var(--muted);font-family:'Syne';font-size:14px;cursor:pointer" onclick="closeModal()">Отмена</button>
+  </div>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#0a0a0f'); tg.setBackgroundColor('#0a0a0f'); }
+
+  let currentType = 'expense';
+  let transactions = JSON.parse(localStorage.getItem('nx_finance') || '[]');
+
+  function renderAll() {
+    const now = new Date();
+    const monthStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const monthTxs = transactions.filter(t => t.date.startsWith(monthStr));
+
+    let income = 0, expense = 0;
+    monthTxs.forEach(t => { if (t.type==='income') income+=t.amount; else expense+=t.amount; });
+    const balance = income - expense;
+
+    document.getElementById('balance').textContent = (balance>=0?'+':'')+balance.toLocaleString();
+    document.getElementById('balance').className = 'balance-amount ' + (balance>=0?'positive':'negative');
+    document.getElementById('income-total').textContent = income.toLocaleString();
+    document.getElementById('expense-total').textContent = expense.toLocaleString();
+
+    const catEmoji = {Food:'🍕',Transport:'🚗',Entertainment:'🎭',Clothing:'👗',Bills:'📱',Health:'💊',Income:'💼',Salary:'💰',Other:'📦'};
+    const list = document.getElementById('transactions-list');
+
+    if (!transactions.length) {
+      list.innerHTML = '<div class="empty"><div class="empty-icon">💳</div><p>Транзакций нет.<br>Добавь первую!</p></div>';
+      return;
+    }
+
+    const sorted = [...transactions].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 50);
+    list.innerHTML = sorted.map(t => `
+      <div class="tx">
+        <div class="tx-icon">${catEmoji[t.category]||'📦'}</div>
+        <div class="tx-info">
+          <div class="tx-cat">${t.category}</div>
+          ${t.note ? `<div class="tx-note">${t.note}</div>` : ''}
+          <div class="tx-date">${new Date(t.date).toLocaleDateString('ru-RU')}</div>
+        </div>
+        <div class="tx-amount ${t.type}">${t.type==='income'?'+':'-'}${t.amount.toLocaleString()}</div>
+      </div>
+    `).join('');
+  }
+
+  function openModal(type) {
+    currentType = type;
+    document.getElementById('modal-title').textContent = type==='income' ? '+ Новый доход' : '− Новый расход';
+    document.getElementById('input-amount').value = '';
+    document.getElementById('input-note').value = '';
+    document.getElementById('modal').classList.add('open');
+    setTimeout(() => document.getElementById('input-amount').focus(), 300);
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+  }
+
+  function submitTransaction() {
+    const amount = parseFloat(document.getElementById('input-amount').value);
+    if (!amount || amount <= 0) { alert('Введи сумму'); return; }
+    const category = document.getElementById('input-category').value;
+    const note = document.getElementById('input-note').value.trim();
+    transactions.push({ id: Date.now(), type: currentType, amount, category, note, date: new Date().toISOString() });
+    localStorage.setItem('nx_finance', JSON.stringify(transactions));
+    closeModal();
+    renderAll();
+
+    if (tg) tg.HapticFeedback?.notificationOccurred('success');
+  }
+
+  document.getElementById('modal').addEventListener('click', e => { if (e.target.id==='modal') closeModal(); });
+  renderAll();
+</script>
+</body>
+</html>

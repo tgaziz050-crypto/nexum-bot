@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>NEXUM — Задачи</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f; --surface: #12121a; --surface2: #1a1a26;
+    --border: rgba(255,255,255,0.07); --accent: #6ef7c4;
+    --text: #f0f0f8; --muted: #6b6b80;
+    --red: #f87171; --orange: #fb923c; --yellow: #fbbf24; --green: #4ade80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Syne', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px; display: flex; align-items: center; gap: 12px;
+  }
+  .back-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; }
+  .header h1 { font-size: 18px; font-weight: 700; flex: 1; }
+  .add-btn {
+    background: var(--accent); border: none; color: #0a0a0f;
+    width: 36px; height: 36px; border-radius: 10px;
+    font-size: 20px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+
+  .filter-tabs {
+    display: flex; gap: 6px; padding: 12px 16px; overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .filter-tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 6px 14px;
+    font-family: 'Syne'; font-size: 13px; font-weight: 600; color: var(--muted);
+    cursor: pointer; white-space: nowrap; transition: all 0.15s;
+  }
+  .tab.active { background: var(--accent); color: #0a0a0f; border-color: var(--accent); }
+
+  .stats-row {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 8px; padding: 0 16px 12px;
+  }
+  .stat-chip {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 12px; text-align: center;
+  }
+  .stat-chip .num { font-size: 20px; font-weight: 800; }
+  .stat-chip .lbl { font-size: 11px; color: var(--muted); }
+
+  .tasks-list { padding: 0 16px 80px; display: flex; flex-direction: column; gap: 8px; }
+  .task-item {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 14px;
+    display: flex; align-items: flex-start; gap: 12px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .task-item.done { opacity: 0.5; }
+  .task-item:active { transform: scale(0.98); }
+  .task-check {
+    width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+    border: 2px solid var(--border); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 1px; transition: all 0.15s;
+    background: none;
+  }
+  .task-check.checked { background: var(--accent); border-color: var(--accent); color: #0a0a0f; }
+  .task-body { flex: 1; }
+  .task-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .task-title.done { text-decoration: line-through; }
+  .task-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .prio-badge {
+    font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 6px; text-transform: uppercase;
+  }
+  .prio-critical { background: rgba(248,113,113,0.2); color: var(--red); }
+  .prio-high     { background: rgba(251,146,60,0.2);  color: var(--orange); }
+  .prio-medium   { background: rgba(251,191,36,0.2);  color: var(--yellow); }
+  .prio-low      { background: rgba(74,222,128,0.2);  color: var(--green); }
+  .task-project { font-size: 11px; color: var(--muted); }
+  .task-due { font-size: 11px; color: var(--muted); }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: flex-end; z-index: 100;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal {
+    background: var(--surface); border-radius: 24px 24px 0 0; padding: 24px; width: 100%;
+    transform: translateY(100%); transition: transform 0.3s ease;
+    max-height: 80vh; overflow-y: auto;
+  }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+  .form-group { margin-bottom: 14px; }
+  .form-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block; }
+  .form-input, .form-select {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px; font-family: 'Syne'; font-size: 14px;
+    color: var(--text); outline: none; appearance: none;
+  }
+  .form-input:focus, .form-select:focus { border-color: var(--accent); }
+  .prio-buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .prio-btn {
+    padding: 8px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface2); font-family: 'Syne'; font-size: 12px; font-weight: 700;
+    color: var(--muted); cursor: pointer; text-align: center; transition: all 0.15s;
+  }
+  .prio-btn.selected { border-color: var(--accent); color: var(--accent); background: rgba(110,247,196,0.1); }
+  .submit-btn {
+    width: 100%; padding: 16px; border: none; border-radius: 14px;
+    background: var(--accent); color: #0a0a0f;
+    font-family: 'Syne'; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 8px;
+  }
+
+  .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <button class="back-btn" onclick="history.back()">‹</button>
+  <h1>✅ Задачи</h1>
+  <button class="add-btn" onclick="openModal()">+</button>
+</div>
+
+<div class="filter-tabs">
+  <div class="tab active" onclick="setFilter('active', this)">Активные</div>
+  <div class="tab" onclick="setFilter('all', this)">Все</div>
+  <div class="tab" onclick="setFilter('done', this)">Выполненные</div>
+</div>
+
+<div class="stats-row">
+  <div class="stat-chip"><div class="num" id="stat-total">0</div><div class="lbl">Всего</div></div>
+  <div class="stat-chip"><div class="num" id="stat-done">0</div><div class="lbl">Готово</div></div>
+  <div class="stat-chip"><div class="num" id="stat-today">0</div><div class="lbl">Сегодня</div></div>
+</div>
+
+<div class="tasks-list" id="tasks-list"></div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-title">Новая задача</div>
+    <div class="form-group">
+      <label class="form-label">Название</label>
+      <input class="form-input" id="t-title" type="text" placeholder="Что нужно сделать?">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Проект</label>
+      <input class="form-input" id="t-project" type="text" placeholder="General">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Приоритет</label>
+      <div class="prio-buttons">
+        <button class="prio-btn" onclick="setPrio('low',this)">🟢 Низкий</button>
+        <button class="prio-btn selected" onclick="setPrio('medium',this)">🟡 Средний</button>
+        <button class="prio-btn" onclick="setPrio('high',this)">🟠 Высокий</button>
+        <button class="prio-btn" onclick="setPrio('critical',this)">🔴 Крит.</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Дедлайн (необязательно)</label>
+      <input class="form-input" id="t-due" type="date">
+    </div>
+    <button class="submit-btn" onclick="addTask()">Добавить задачу</button>
+    <button style="width:100%;padding:12px;margin-top:8px;background:none;border:none;color:var(--muted);font-family:'Syne';font-size:14px;cursor:pointer" onclick="closeModal()">Отмена</button>
+  </div>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#0a0a0f'); tg.setBackgroundColor('#0a0a0f'); }
+
+  let tasks = JSON.parse(localStorage.getItem('nx_tasks') || '[]');
+  let filter = 'active';
+  let selectedPrio = 'medium';
+
+  function save() { localStorage.setItem('nx_tasks', JSON.stringify(tasks)); }
+
+  function setFilter(f, el) {
+    filter = f;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    renderTasks();
+  }
+
+  function setPrio(p, el) {
+    selectedPrio = p;
+    document.querySelectorAll('.prio-btn').forEach(b => b.classList.remove('selected'));
+    el.classList.add('selected');
+  }
+
+  function renderTasks() {
+    let filtered = tasks;
+    if (filter === 'active') filtered = tasks.filter(t => t.status !== 'done');
+    if (filter === 'done') filtered = tasks.filter(t => t.status === 'done');
+
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('stat-total').textContent = tasks.length;
+    document.getElementById('stat-done').textContent = tasks.filter(t => t.status === 'done').length;
+    document.getElementById('stat-today').textContent = tasks.filter(t => t.createdAt?.startsWith(today)).length;
+
+    const list = document.getElementById('tasks-list');
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty"><div class="empty-icon">✅</div><p>${filter==='done'?'Выполненных задач нет':'Задач нет.<br>Нажми + чтобы добавить'}</p></div>`;
+      return;
+    }
+
+    const prioOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    filtered.sort((a, b) => (prioOrder[a.priority] || 2) - (prioOrder[b.priority] || 2));
+
+    list.innerHTML = filtered.map(t => `
+      <div class="task-item${t.status==='done'?' done':''}">
+        <button class="task-check${t.status==='done'?' checked':''}" onclick="toggleTask('${t.id}', event)">
+          ${t.status==='done' ? '✓' : ''}
+        </button>
+        <div class="task-body">
+          <div class="task-title${t.status==='done'?' done':''}">${escHtml(t.title)}</div>
+          <div class="task-meta">
+            <span class="prio-badge prio-${t.priority}">${prioBadge(t.priority)}</span>
+            ${t.project && t.project !== 'General' ? `<span class="task-project">📁 ${escHtml(t.project)}</span>` : ''}
+            ${t.dueDate ? `<span class="task-due">📅 ${t.dueDate}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function prioBadge(p) {
+    return { critical: '🔴 Критический', high: '🟠 Высокий', medium: '🟡 Средний', low: '🟢 Низкий' }[p] || p;
+  }
+
+  function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function toggleTask(id, e) {
+    e.stopPropagation();
+    const t = tasks.find(t => t.id === id);
+    if (t) {
+      t.status = t.status === 'done' ? 'todo' : 'done';
+      t.updatedAt = new Date().toISOString();
+      save(); renderTasks();
+      if (tg) tg.HapticFeedback?.impactOccurred('light');
+    }
+  }
+
+  function openModal() {
+    document.getElementById('t-title').value = '';
+    document.getElementById('t-project').value = '';
+    document.getElementById('t-due').value = '';
+    document.getElementById('modal').classList.add('open');
+    setTimeout(() => document.getElementById('t-title').focus(), 300);
+  }
+
+  function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+  function addTask() {
+    const title = document.getElementById('t-title').value.trim();
+    if (!title) { alert('Введи название задачи'); return; }
+    tasks.push({
+      id: Date.now().toString(), title,
+      project: document.getElementById('t-project').value.trim() || 'General',
+      priority: selectedPrio, status: 'todo',
+      dueDate: document.getElementById('t-due').value || null,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+    save(); closeModal(); renderTasks();
+    if (tg) tg.HapticFeedback?.notificationOccurred('success');
+  }
+
+  document.getElementById('modal').addEventListener('click', e => { if (e.target.id==='modal') closeModal(); });
+  renderTasks();
+</script>
+</body>
+</html>

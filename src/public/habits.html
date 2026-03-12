@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>NEXUM — Привычки</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Syne+Mono&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f; --surface: #12121a; --surface2: #1a1a26;
+    --border: rgba(255,255,255,0.07); --accent: #fbbf24;
+    --text: #f0f0f8; --muted: #6b6b80; --green: #4ade80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Syne', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px; display: flex; align-items: center; gap: 12px;
+  }
+  .back-btn { background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; }
+  .header h1 { font-size: 18px; font-weight: 700; flex: 1; }
+  .add-btn {
+    background: var(--accent); border: none; color: #0a0a0f;
+    width: 36px; height: 36px; border-radius: 10px;
+    font-size: 20px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+
+  .today-banner {
+    margin: 16px; background: linear-gradient(135deg, #1a1500, #12121a);
+    border: 1px solid rgba(251,191,36,0.3); border-radius: 20px; padding: 20px;
+  }
+  .today-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .today-progress { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .progress-bar {
+    flex: 1; height: 8px; background: var(--surface2);
+    border-radius: 4px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
+  .progress-text { font-family: 'Syne Mono'; font-size: 14px; color: var(--accent); }
+
+  .habits-list { padding: 0 16px 80px; display: flex; flex-direction: column; gap: 10px; }
+  .habit-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 18px; padding: 16px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .habit-emoji-btn {
+    width: 52px; height: 52px; border-radius: 14px;
+    background: var(--surface2); border: 2px solid var(--border);
+    font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s; flex-shrink: 0;
+  }
+  .habit-emoji-btn.done {
+    background: rgba(251,191,36,0.15);
+    border-color: var(--accent);
+    transform: scale(1.05);
+  }
+  .habit-info { flex: 1; }
+  .habit-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .habit-streak {
+    display: flex; align-items: center; gap: 6px;
+    font-family: 'Syne Mono'; font-size: 13px;
+  }
+  .streak-num { color: var(--accent); font-weight: 700; }
+  .streak-label { color: var(--muted); font-size: 12px; }
+  .habit-week { display: flex; gap: 4px; margin-top: 8px; }
+  .week-dot {
+    width: 24px; height: 24px; border-radius: 6px;
+    background: var(--surface2); display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: var(--muted);
+  }
+  .week-dot.done { background: rgba(251,191,36,0.3); color: var(--accent); }
+  .week-dot.today { border: 1px solid var(--accent); }
+  .best-streak { font-size: 11px; color: var(--muted); }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: flex-end; z-index: 100;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal {
+    background: var(--surface); border-radius: 24px 24px 0 0; padding: 24px; width: 100%;
+    transform: translateY(100%); transition: transform 0.3s ease;
+  }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+  .form-group { margin-bottom: 14px; }
+  .form-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block; }
+  .form-input {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px; font-family: 'Syne'; font-size: 14px;
+    color: var(--text); outline: none;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .emoji-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+  .emoji-opt {
+    width: 40px; height: 40px; border-radius: 10px; background: var(--surface2);
+    border: 2px solid var(--border); font-size: 20px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+  }
+  .emoji-opt.selected { border-color: var(--accent); background: rgba(251,191,36,0.15); }
+  .submit-btn {
+    width: 100%; padding: 16px; border: none; border-radius: 14px;
+    background: var(--accent); color: #0a0a0f;
+    font-family: 'Syne'; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 8px;
+  }
+
+  .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <button class="back-btn" onclick="history.back()">‹</button>
+  <h1>🎯 Привычки</h1>
+  <button class="add-btn" onclick="openModal()">+</button>
+</div>
+
+<div class="today-banner">
+  <div class="today-label">Сегодня</div>
+  <div class="today-progress">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="progress-text" id="progress-text">0/0</div>
+  </div>
+</div>
+
+<div class="habits-list" id="habits-list"></div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-title">Новая привычка</div>
+    <div class="form-group">
+      <label class="form-label">Название</label>
+      <input class="form-input" id="h-name" type="text" placeholder="Медитация, Спорт, Чтение...">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Иконка</label>
+      <div class="emoji-picker" id="emoji-picker"></div>
+    </div>
+    <button class="submit-btn" onclick="addHabit()">Добавить привычку</button>
+    <button style="width:100%;padding:12px;margin-top:8px;background:none;border:none;color:var(--muted);font-family:'Syne';font-size:14px;cursor:pointer" onclick="closeModal()">Отмена</button>
+  </div>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#0a0a0f'); tg.setBackgroundColor('#0a0a0f'); }
+
+  const EMOJIS = ['🎯','💪','📚','🧘','🏃','💧','🥗','😴','✍️','🎸','🎨','🧹','💊','🚿','☀️','🌙'];
+  let selectedEmoji = '🎯';
+  let habits = JSON.parse(localStorage.getItem('nx_habits') || '[]');
+  const today = new Date().toISOString().split('T')[0];
+
+  function save() { localStorage.setItem('nx_habits', JSON.stringify(habits)); }
+
+  function getWeekDays() {
+    const days = [];
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    for (let i = 0; i < 7; i++) {
+      days.push(d.toISOString().split('T')[0]);
+      d.setDate(d.getDate() + 1);
+    }
+    return days;
+  }
+
+  function getShortDay(dateStr) {
+    return ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][new Date(dateStr + 'T12:00').getDay()];
+  }
+
+  function isDoneToday(habit) {
+    return habit.logs?.includes(today);
+  }
+
+  function renderHabits() {
+    const weekDays = getWeekDays();
+    const doneToday = habits.filter(h => isDoneToday(h)).length;
+    const pct = habits.length ? Math.round(doneToday / habits.length * 100) : 0;
+    document.getElementById('progress-fill').style.width = pct + '%';
+    document.getElementById('progress-text').textContent = `${doneToday}/${habits.length}`;
+
+    const list = document.getElementById('habits-list');
+    if (!habits.length) {
+      list.innerHTML = '<div class="empty"><div class="empty-icon">🎯</div><p>Нет привычек.<br>Добавь первую!</p></div>';
+      return;
+    }
+
+    list.innerHTML = habits.map(h => `
+      <div class="habit-card">
+        <button class="habit-emoji-btn${isDoneToday(h)?' done':''}" onclick="toggleHabit('${h.id}')">
+          ${h.emoji}
+        </button>
+        <div class="habit-info">
+          <div class="habit-name">${escHtml(h.name)}</div>
+          <div class="habit-streak">
+            🔥 <span class="streak-num">${h.streak}</span>
+            <span class="streak-label">дн. подряд</span>
+          </div>
+          <div class="habit-week">
+            ${weekDays.map(d => `
+              <div class="week-dot${h.logs?.includes(d)?' done':''}${d===today?' today':''}">
+                ${getShortDay(d)[0]}
+              </div>
+            `).join('')}
+          </div>
+          <div class="best-streak">Рекорд: ${h.bestStreak || 0} дн.</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function toggleHabit(id) {
+    const h = habits.find(h => h.id === id);
+    if (!h) return;
+    if (!h.logs) h.logs = [];
+
+    if (h.logs.includes(today)) {
+      h.logs = h.logs.filter(d => d !== today);
+      // Recalculate streak
+      h.streak = Math.max(0, h.streak - 1);
+    } else {
+      h.logs.push(today);
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yStr = yesterday.toISOString().split('T')[0];
+      h.streak = h.logs.includes(yStr) ? h.streak + 1 : 1;
+      h.bestStreak = Math.max(h.bestStreak || 0, h.streak);
+      if (tg) tg.HapticFeedback?.impactOccurred('medium');
+    }
+    save(); renderHabits();
+  }
+
+  function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function renderEmojiPicker() {
+    document.getElementById('emoji-picker').innerHTML = EMOJIS.map(e => `
+      <div class="emoji-opt${e===selectedEmoji?' selected':''}" onclick="selectEmoji('${e}', this)">${e}</div>
+    `).join('');
+  }
+
+  function selectEmoji(e, el) {
+    selectedEmoji = e;
+    document.querySelectorAll('.emoji-opt').forEach(el => el.classList.remove('selected'));
+    el.classList.add('selected');
+  }
+
+  function openModal() {
+    document.getElementById('h-name').value = '';
+    selectedEmoji = '🎯';
+    renderEmojiPicker();
+    document.getElementById('modal').classList.add('open');
+    setTimeout(() => document.getElementById('h-name').focus(), 300);
+  }
+
+  function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+  function addHabit() {
+    const name = document.getElementById('h-name').value.trim();
+    if (!name) { alert('Введи название привычки'); return; }
+    habits.push({ id: Date.now().toString(), name, emoji: selectedEmoji, streak: 0, bestStreak: 0, logs: [], createdAt: new Date().toISOString() });
+    save(); closeModal(); renderHabits();
+    if (tg) tg.HapticFeedback?.notificationOccurred('success');
+  }
+
+  document.getElementById('modal').addEventListener('click', e => { if (e.target.id==='modal') closeModal(); });
+  renderHabits();
+</script>
+</body>
+</html>

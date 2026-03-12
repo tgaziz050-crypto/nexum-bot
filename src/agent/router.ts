@@ -1,177 +1,134 @@
-/**
- * NEXUM v5 — Message Router
- * Multilingual intent detection — Russian, English, Uzbek, Turkish, Arabic, and more
- */
+import { config, getKey } from '../core/config.ts';
 
-export type Intent =
-  | "finance"
-  | "note"
-  | "task"
-  | "habit"
-  | "reminder"
-  | "alarm"
-  | "search"
-  | "pc_command"
-  | "link_code"
-  | "plan"
-  | "voice_mode"
-  | "general";
+export interface Message { role: 'user' | 'assistant' | 'system'; content: string | any[]; }
 
-interface RouteResult {
-  intent: Intent;
-  confidence: number;
-  extracted?: string;
+async function callCerebras(messages: Message[], key: string): Promise<string> {
+  const r = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'llama-3.3-70b', messages, max_tokens: 2048, temperature: 0.7 })
+  });
+  if (!r.ok) throw new Error(`Cerebras ${r.status}`);
+  const d = await r.json() as any;
+  return d.choices[0].message.content;
 }
 
-const ROUTES: { intent: Intent; patterns: RegExp[]; confidence: number }[] = [
-  {
-    intent: "finance",
-    patterns: [
-      // RU
-      /потратил|купил|заплатил|расход|трата|оплатил|получил зарплату|доход|перевёл|перевел/i,
-      // EN
-      /paid|spent|bought|expense|income|salary|earned|transfer|transaction/i,
-      // UZ
-      /xarajat|sotib oldim|to'ladim|maosh|daromad|pul/i,
-      // TR
-      /harcadım|satın aldım|ödedim|gelir|maaş|masraf/i,
-    ],
-    confidence: 0.9,
-  },
-  {
-    intent: "note",
-    patterns: [
-      // RU
-      /запиши|сохрани|запомни|заметка|добавь в заметки/i,
-      // EN
-      /note|save this|remember this|write down|create note/i,
-      // UZ
-      /eslab qol|yozib qo'y|qeyd/i,
-      // TR
-      /not al|kaydet|hatırla/i,
-    ],
-    confidence: 0.85,
-  },
-  {
-    intent: "task",
-    patterns: [
-      // RU
-      /задача|добавь задачу|нужно сделать|поставь задачу|нужно выполнить/i,
-      // EN
-      /task|todo|need to|add task|create task/i,
-      // UZ
-      /vazifa|ish|qilish kerak/i,
-      // TR
-      /görev|yapılacak|ekle/i,
-    ],
-    confidence: 0.85,
-  },
-  {
-    intent: "reminder",
-    patterns: [
-      // RU
-      /напомни|напоминание|через \d+|в \d+:\d+|завтра в|сегодня в/i,
-      // EN
-      /remind|reminder|in \d+ min|at \d+:\d+|tomorrow at/i,
-      // UZ
-      /eslatib qo'y|eslatma|soat/i,
-      // TR
-      /hatırlat|hatırlatıcı|saat \d/i,
-      // AR
-      /ذكرني|تذكير/,
-    ],
-    confidence: 0.9,
-  },
-  {
-    intent: "alarm",
-    patterns: [
-      // RU
-      /будильник|разбуди|поставь будильник|сигнал/i,
-      // EN
-      /alarm|wake me|set alarm/i,
-      // UZ
-      /uyg'ot|budilnik|signal/i,
-      // TR
-      /alarm|uyandır/i,
-    ],
-    confidence: 0.9,
-  },
-  {
-    intent: "search",
-    patterns: [
-      // RU
-      /найди|поищи|загугли|поиск|ищи|что такое|кто такой|когда был/i,
-      // EN
-      /search|find|google|look up|what is|who is|when was/i,
-      // UZ
-      /qidir|izla|top/i,
-      // TR
-      /ara|bul|google/i,
-      // AR
-      /ابحث|جد|ما هو/,
-    ],
-    confidence: 0.85,
-  },
-  {
-    intent: "pc_command",
-    patterns: [
-      // RU
-      /открой|запусти|скриншот|скрин|включи|выключи|моего компьютера|на компе|агент/i,
-      // EN
-      /open app|launch|screenshot|screen|my computer|on my pc|pc agent/i,
-      // UZ
-      /oч|ish|kompyuter|skrinshot/i,
-    ],
-    confidence: 0.85,
-  },
-  {
-    intent: "habit",
-    patterns: [
-      // RU
-      /привычка|трекер|отметить|стрик|серия|каждый день|ежедневно/i,
-      // EN
-      /habit|streak|track|daily/i,
-      // UZ
-      /odat|kunlik/i,
-      // TR
-      /alışkanlık|günlük/i,
-    ],
-    confidence: 0.8,
-  },
-  {
-    intent: "voice_mode",
-    patterns: [
-      /(?:включи|вкл|turn on|enable)\s+(?:голос|voice)/i,
-      /(?:выключи|выкл|turn off|disable)\s+(?:голос|voice)/i,
-      /(?:отвечай|reply|respond)\s+(?:голосом|by voice|with voice)/i,
-    ],
-    confidence: 0.95,
-  },
-];
+async function callGroq(messages: Message[], key: string): Promise<string> {
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages, max_tokens: 2048, temperature: 0.7 })
+  });
+  if (!r.ok) throw new Error(`Groq ${r.status}`);
+  const d = await r.json() as any;
+  return d.choices[0].message.content;
+}
 
-// Linking code: exactly 6 uppercase hex-like chars
-const LINK_CODE_RE = /\b([A-F0-9]{6})\b/i;
+async function callGemini(messages: Message[], key: string, hasImage = false): Promise<string> {
+  const model = hasImage ? 'gemini-1.5-flash' : 'gemini-1.5-flash';
+  const contents = messages.filter(m => m.role !== 'system').map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: Array.isArray(m.content) ? m.content : [{ text: m.content }]
+  }));
+  const systemMsg = messages.find(m => m.role === 'system');
+  const body: any = { contents, generationConfig: { maxOutputTokens: 2048, temperature: 0.7 } };
+  if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
 
-export function detectIntent(text: string): RouteResult {
-  // Check for linking code
-  if (LINK_CODE_RE.test(text.trim()) && text.trim().length <= 10) {
-    return { intent: "link_code", confidence: 0.99 };
-  }
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error(`Gemini ${r.status}`);
+  const d = await r.json() as any;
+  return d.candidates[0].content.parts[0].text;
+}
 
-  let best: RouteResult = { intent: "general", confidence: 0 };
+async function callOpenRouter(messages: Message[], key: string): Promise<string> {
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://nexum.app' },
+    body: JSON.stringify({ model: 'meta-llama/llama-3.3-70b-instruct', messages, max_tokens: 2048 })
+  });
+  if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
+  const d = await r.json() as any;
+  return d.choices[0].message.content;
+}
 
-  for (const route of ROUTES) {
-    if (route.patterns.some(p => p.test(text))) {
-      if (route.confidence > best.confidence) {
-        best = { intent: route.intent, confidence: route.confidence };
-      }
+async function callDeepSeek(messages: Message[], key: string): Promise<string> {
+  const r = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'deepseek-chat', messages, max_tokens: 2048 })
+  });
+  if (!r.ok) throw new Error(`DeepSeek ${r.status}`);
+  const d = await r.json() as any;
+  return d.choices[0].message.content;
+}
+
+async function callSambaNova(messages: Message[], key: string): Promise<string> {
+  const r = await fetch('https://api.sambanova.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'Meta-Llama-3.3-70B-Instruct', messages, max_tokens: 2048 })
+  });
+  if (!r.ok) throw new Error(`SambaNova ${r.status}`);
+  const d = await r.json() as any;
+  return d.choices[0].message.content;
+}
+
+async function callTogether(messages: Message[], key: string): Promise<string> {
+  const r = await fetch('https://api.together.xyz/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', messages, max_tokens: 2048 })
+  });
+  if (!r.ok) throw new Error(`Together ${r.status}`);
+  const d = await r.json() as any;
+  return d.choices[0].message.content;
+}
+
+export async function chat(messages: Message[], hasImage = false): Promise<string> {
+  // If image present, prefer Gemini
+  if (hasImage) {
+    const gKey = getKey('gemini');
+    if (gKey) {
+      try { return await callGemini(messages, gKey, true); } catch (e) { console.warn('[gemini vision]', e); }
     }
   }
 
-  return best;
-}
+  const providers: Array<[string, () => Promise<string>]> = [];
 
-export function extractLinkCode(text: string): string | null {
-  const m = LINK_CODE_RE.exec(text.trim());
-  return m ? m[1]!.toUpperCase() : null;
+  const cb = getKey('cerebras');
+  if (cb) providers.push(['cerebras', () => callCerebras(messages, cb)]);
+
+  const gr = getKey('groq');
+  if (gr) providers.push(['groq', () => callGroq(messages, gr)]);
+
+  const gm = getKey('gemini');
+  if (gm) providers.push(['gemini', () => callGemini(messages, gm)]);
+
+  const or = getKey('openrouter');
+  if (or) providers.push(['openrouter', () => callOpenRouter(messages, or)]);
+
+  const ds = getKey('deepseek');
+  if (ds) providers.push(['deepseek', () => callDeepSeek(messages, ds)]);
+
+  const sn = getKey('sambanova');
+  if (sn) providers.push(['sambanova', () => callSambaNova(messages, sn)]);
+
+  const to = getKey('together');
+  if (to) providers.push(['together', () => callTogether(messages, to)]);
+
+  for (const [name, fn] of providers) {
+    try {
+      const result = await fn();
+      console.log(`[ai] provider=${name}`);
+      return result;
+    } catch (e) {
+      console.warn(`[ai] ${name} failed:`, e);
+    }
+  }
+
+  return '❌ Все AI-провайдеры недоступны. Проверьте ключи.';
 }

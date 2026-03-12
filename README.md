@@ -1,66 +1,34 @@
-# NEXUM v8 — Full OpenClaw PC Agent
+# NEXUM v10
 
-## Что нового в v8: полный набор OpenClaw в PC Agent
+## Что нового в v10
+- ✅ Полный редизайн всех Mini Apps (Apple + NEXUM logo стиль: чёрно-белый минимализм)
+- ✅ Авто-определение Telegram UID (через `initDataUnsafe.user.id`, не нужно вводить вручную)
+- ✅ NLP-автоматизация: бот автоматически пишет в Mini Apps ("потратил 50к на еду" → записывает в финансы)
+- ✅ Мультиязычность: ru/en/uz/de/zh/ar
+- ✅ Мультивалютность: UZS/USD/EUR/RUB/GBP/JPY/CNY и другие с реальными курсами
+- ✅ Таблица accounts (счета) — отдельные счета с балансами
+- ✅ PC Agent со всеми навыками OpenClaw (см. nexum_agent.py)
+- ✅ API ключи только на Railway — другим пользователям ничего вводить не нужно
 
-### Команды управления агентом через бота
-
-| Команда | Описание |
-|---|---|
-| `/pc` | Статус агента |
-| `/link КОД` | Привязка — UID вшивается персонально |
-| `/screenshot` | Скриншот экрана |
-| `/screenshot x1,y1,x2,y2` | Скриншот региона |
-| `/run <cmd>` | Терминальная команда |
-| `/bgrun <cmd>` | Фоновый процесс |
-| `/bglist` | Список фоновых процессов |
-| `/bgstop <id>` | Остановить фоновый процесс |
-| `/sysinfo` | CPU / RAM / Disk / Net |
-| `/ps [limit]` | Топ процессов |
-| `/kill <pid/имя>` | Убить процесс |
-| `/files <op> <path>` | Файловая система |
-| `/clipboard [read/write]` | Буфер обмена |
-| `/notify Заголовок | Текст` | Системное уведомление |
-| `/window [list/focus/close]` | Управление окнами |
-| `/http METHOD url [body]` | HTTP-запрос |
-| `/browser <url>` | Открыть URL |
-| `/openapp <имя>` | Открыть приложение |
-| `/mouse <action> [x y text]` | Управление мышью |
-| `/keyboard <текст>` | Набрать текст |
-| `/hotkey <combo>` | Нажать хоткей |
-| `/network` | Сетевая информация |
-| `/agentid` | Идентификация пользователя |
-
-### Автоопределение и вшивание пользователя
-
-При привязке (`/link КОД`) агент получает Telegram `uid` и сохраняет его
-в `~/.nexum_agent.json` вместе с os_user, hostname, platform.
-При следующих запусках агент автоматически регистрируется — ввод кода не нужен.
-
-### Установка агента
-
+## Деплой
 ```bash
-pip install websockets pyautogui pillow psutil requests pyperclip plyer
-python nexum_agent.py
-# Свой сервер:
-python nexum_agent.py wss://your-project.up.railway.app/ws
+npm install && npm run build
+# Push to GitHub → Railway auto-deploys
 ```
 
-### Примеры
+## Railway Variables (уже настроены)
+BOT_TOKEN, WEBAPP_URL, CB1-7, GR1-7, G1-7, GK1-3, SN1-5, TO1-7, OR1-7, DS1-6, CL1, SERPER_KEY1-3
 
-```
-/run ls -la ~/Desktop
-/bgrun python3 server.py
-/files list ~/Documents
-/files read ~/.bashrc
-/files write ~/notes.txt привет
-/files search ~/Projects *.py
-/screenshot
-/screenshot 0,0,1920,1080
-/mouse click 500 300
-/hotkey ctrl+shift+t
-/http GET https://api.ipify.org
-/notify Готово | Задача выполнена
-/clipboard write текст для копирования
-/kill chrome
-/window list
+## Mini Apps URL
+- Hub: WEBAPP_URL/
+- Finance: WEBAPP_URL/finance
+- Notes: WEBAPP_URL/notes
+- Tasks: WEBAPP_URL/tasks
+- Habits: WEBAPP_URL/habits
+
+## PC Agent
+```bash
+pip install websockets pyautogui pillow psutil requests pyperclip
+python nexum_agent.py wss://nexum-bot-production-ae70.up.railway.app/ws
+# Затем в боте: /link → ввести код
 ```

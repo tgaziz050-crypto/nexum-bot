@@ -61,13 +61,25 @@ db.exec(`
     done_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    currency TEXT DEFAULT 'UZS',
+    balance REAL DEFAULT 0,
+    icon TEXT DEFAULT '💳',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS finance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uid INTEGER NOT NULL,
     type TEXT NOT NULL,
     amount REAL NOT NULL,
-    category TEXT DEFAULT 'Other',
+    category TEXT DEFAULT 'other',
     note TEXT,
+    account_id INTEGER,
+    currency TEXT DEFAULT 'UZS',
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -109,7 +121,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS pc_agents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid INTEGER NOT NULL,
+    uid INTEGER NOT NULL UNIQUE,
     device_name TEXT,
     platform TEXT,
     last_seen TEXT,
@@ -154,6 +166,11 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 `);
+
+// Migrate: add account_id/currency columns if missing
+try { db.exec(`ALTER TABLE finance ADD COLUMN account_id INTEGER`); } catch {}
+try { db.exec(`ALTER TABLE finance ADD COLUMN currency TEXT DEFAULT 'UZS'`); } catch {}
+try { db.exec(`ALTER TABLE pc_agents ADD COLUMN device_name TEXT`); } catch {}
 
 export function ensureUser(uid: number, username?: string, firstName?: string) {
   db.prepare(`

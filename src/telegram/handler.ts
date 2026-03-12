@@ -5,6 +5,7 @@ import { execute } from '../agent/executor';
 import { transcribeVoice } from '../tools/stt';
 import { textToSpeech, VOICES, getUserVoicePref, setUserVoicePref } from '../tools/tts';
 import { webSearch } from '../tools/search';
+import { processNlpAction } from '../agent/nlp_actions';
 import { getMemories, clearMemory, clearHistory } from '../agent/memory';
 import { chat } from '../agent/router';
 
@@ -1373,8 +1374,16 @@ export function setupHandlers(bot: Bot) {
     await ctx.replyWithChatAction(mode === 'always' ? 'record_voice' : 'typing');
 
     try {
-      const result = await execute(uid, text);
-      await sendVoiceReply(ctx, result.text, uid, false);
+      // ── NLP Auto-action: check if message should auto-update Mini Apps ──
+      const nlpResult = await processNlpAction(uid, text);
+      if (nlpResult.handled && nlpResult.summary) {
+        // Still pass to AI for conversational response but prepend context
+        const result = await execute(uid, text + `\n[Система: автоматически выполнено действие: ${nlpResult.summary}]`);
+        await sendVoiceReply(ctx, nlpResult.summary + '\n\n' + result.text, uid, false);
+      } else {
+        const result = await execute(uid, text);
+        await sendVoiceReply(ctx, result.text, uid, false);
+      }
     } catch (e: any) {
       console.error('[text handler]', e);
       await ctx.reply(`❌ ${e.message}`);

@@ -1,7 +1,7 @@
 import { chat, Message } from './router';
 import { getMemories, getHistory, saveMessage } from './memory';
 import { db } from '../core/db';
-import { vm } from 'vm';
+const vm = require('vm');
 import { saveToVectorMemory, getRelevantContext } from '../memory/vector';
 
 const SYSTEM = `Ты NEXUM — персональный AI-агент в Telegram.

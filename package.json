@@ -1,6 +1,6 @@
 {
   "name": "nexum",
-  "version": "9.0.0",
+  "version": "10.0.0",
   "description": "NEXUM — Autonomous AI Agent Platform for Telegram",
   "private": true,
   "engines": { "node": ">=20" },

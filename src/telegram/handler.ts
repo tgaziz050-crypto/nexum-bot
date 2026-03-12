@@ -87,13 +87,10 @@ async function sendVoiceReply(ctx: Context, text: string, uid: number, isVoiceIn
 
   try {
     await ctx.replyWithChatAction('record_voice');
-    const tts = await textToSpeech(text, uid);
+    const speakText = text.replace(/[\u{1F000}-\u{1FFFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{FE00}-\u{FE0F}]|[\u{1F900}-\u{1F9FF}]/gu, '').replace(/[*_`]/g, '').trim();
+    const tts = await textToSpeech(speakText || text, uid);
     const inputFile = new InputFile(tts.buffer, `nexum_voice.${tts.format}`);
     await ctx.replyWithVoice(inputFile);
-    if (text.length > 10) {
-      const preview = text.replace(/[*_`]/g, '').substring(0, 250);
-      await ctx.reply(`💬 _${preview}${text.length > 250 ? '...' : ''}_`, { parse_mode: 'Markdown' });
-    }
   } catch (e: any) {
     console.warn('[tts] Failed, fallback to text:', e.message?.slice(0, 100));
     await safeSend(ctx, text);
@@ -207,7 +204,7 @@ export function setupHandlers(bot: Bot) {
     ensureUser(uid, ctx.from?.username, ctx.from?.first_name);
     await safeSend(ctx,
       `👋 Привет, *${ctx.from?.first_name || 'друг'}*!\n\n` +
-      `Я *NEXUM* — живой AI-агент. Умею:\n\n` +
+      `Я *NEXUM* — твой AI-агент.\n\n` +
       `🤖 Отвечать на любые вопросы\n` +
       `🎙 Понимать голосовые сообщения\n` +
       `📸 Анализировать фото и изображения\n` +
@@ -232,7 +229,7 @@ export function setupHandlers(bot: Bot) {
   // /help
   bot.command('help', async (ctx) => {
     await safeSend(ctx,
-      `*Команды NEXUM v7*\n\n` +
+      `*NEXUM — Команды*\n\n` +
       `*Основное*\n` +
       `• Просто пиши — отвечу\n` +
       `• Отправь голосовое — расшифрую + отвечу голосом\n` +
@@ -669,7 +666,7 @@ export function setupHandlers(bot: Bot) {
     const lastSeen  = agent.last_seen ? new Date(agent.last_seen).toLocaleString('ru-RU') : 'неизвестно';
     const statusIcon = online ? '🟢 Онлайн' : '🔴 Офлайн';
     await safeSend(ctx,
-      `💻 *PC Agent v8*\n\n` +
+      `💻 *PC Agent*\n\n` +
       `${statusIcon}\n` +
       `📱 ${agent.device_name || agent.platform || 'неизвестно'}\n` +
       `🕐 Последний раз: ${lastSeen}\n\n` +
@@ -1209,7 +1206,7 @@ export function setupHandlers(bot: Bot) {
     const totalSites = (db.prepare('SELECT COUNT(*) as c FROM websites').get() as any).c;
     const agentOnline = (app as any).isAgentOnline?.(uid);
     await safeSend(ctx,
-      `📊 *NEXUM v8 Status*\n\n` +
+      `📊 *NEXUM*\n\n` +
       `👥 Пользователей: ${totalUsers}\n` +
       `📝 Заметок: ${totalNotes}\n` +
       `✅ Задач: ${totalTasks}\n` +
@@ -1258,8 +1255,6 @@ export function setupHandlers(bot: Bot) {
   bot.on('message:photo', async (ctx) => {
     const uid = ctx.from!.id;
     ensureUser(uid, ctx.from?.username, ctx.from?.first_name);
-    await reactToMessage(ctx);
-
     const caption = ctx.message.caption || '';
     const statusMsg = await ctx.reply('👁 Анализирую изображение...');
 
@@ -1278,8 +1273,6 @@ export function setupHandlers(bot: Bot) {
   bot.on('message:document', async (ctx) => {
     const uid = ctx.from!.id;
     ensureUser(uid, ctx.from?.username, ctx.from?.first_name);
-    await reactToMessage(ctx);
-
     const mime = ctx.message.document?.mime_type || '';
     if (mime.startsWith('image/')) {
       const statusMsg = await ctx.reply('👁 Анализирую изображение...');
@@ -1307,7 +1300,6 @@ export function setupHandlers(bot: Bot) {
   bot.on('message:voice', async (ctx) => {
     const uid = ctx.from!.id;
     ensureUser(uid, ctx.from?.username, ctx.from?.first_name);
-    await reactToMessage(ctx);
 
     const statusMsg = await ctx.reply('🎙 Слушаю...');
 
@@ -1368,8 +1360,6 @@ export function setupHandlers(bot: Bot) {
     if (text.startsWith('/')) return;
 
     // React to message
-    await reactToMessage(ctx);
-
     const mode = getUserVoiceMode(uid);
     await ctx.replyWithChatAction(mode === 'always' ? 'record_voice' : 'typing');
 

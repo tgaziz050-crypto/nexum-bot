@@ -25,11 +25,20 @@ async function callGroq(messages: Message[], key: string): Promise<string> {
 }
 
 async function callGemini(messages: Message[], key: string, hasImage = false): Promise<string> {
-  const model = hasImage ? 'gemini-1.5-flash' : 'gemini-1.5-flash';
-  const contents = messages.filter(m => m.role !== 'system').map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: Array.isArray(m.content) ? m.content : [{ text: m.content }]
-  }));
+  const model = 'gemini-1.5-flash';
+  const contents = messages.filter(m => m.role !== 'system').map(m => {
+    if (!Array.isArray(m.content)) return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
+    // Convert OpenAI image_url format → Gemini inline_data format
+    const parts = m.content.map((p: any) => {
+      if (p.type === 'image_url' && p.image_url?.url) {
+        const match = p.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) return { inline_data: { mime_type: match[1], data: match[2] } };
+      }
+      if (p.type === 'text') return { text: p.text };
+      return p;
+    });
+    return { role: m.role === 'assistant' ? 'model' : 'user', parts };
+  });
   const systemMsg = messages.find(m => m.role === 'system');
   const body: any = { contents, generationConfig: { maxOutputTokens: 2048, temperature: 0.7 } };
   if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };

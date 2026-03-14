@@ -529,7 +529,7 @@ export function setupHandlers(bot: Bot, app: any) {
     try {
       const img = await getImageB64(ctx, bot); if (!img) throw new Error('Не удалось загрузить');
       const result = await execute(uid, ctx.message.caption||'Что на изображении?', img.data, img.mime);
-      await safeEdit(ctx, ctx.chat!.id, s.message_id, result.text); await semanticReact(ctx);
+      await safeEdit(ctx, ctx.chat!.id, s.message_id, result.text); 
     } catch (e: any) { await safeEdit(ctx, ctx.chat!.id, s.message_id, `❌ ${e.message}`); }
   });
 
@@ -571,7 +571,7 @@ export function setupHandlers(bot: Bot, app: any) {
       } else {
         await safeEdit(ctx, ctx.chat!.id, s.message_id, `🎙 _${transcript}_\n\n${result.text}`);
       }
-      await semanticReact(ctx);
+      
     } catch (e: any) { await safeEdit(ctx, ctx.chat!.id, s.message_id, `❌ ${e.message}`).catch(()=>ctx.reply(`❌ ${e.message}`)); }
   });
 
@@ -616,7 +616,7 @@ export function setupHandlers(bot: Bot, app: any) {
     try {
       const result = await execute(uid, text);
       await voiceReply(ctx, result.text, uid, false);
-      await semanticReact(ctx);
+      
     } catch (e: any) { console.error('[text handler]', e); await ctx.reply(`❌ ${e.message}`); }
   });
 }

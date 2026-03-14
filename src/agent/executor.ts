@@ -1,41 +1,106 @@
 import { chat, Message } from './router';
 import { getMemories, getHistory, saveMessage, autoExtract } from './memory';
 import { db } from '../core/db';
+import { config } from '../core/config';
 const vm = require('vm');
 
-// ── System prompt ─────────────────────────────────────────────────────────────
-const SYSTEM = `Ты NEXUM — персональный AI-агент. Общаешься внутри Telegram.
+// ── OpenClaw-style system prompt builder ─────────────────────────────────────
+// Builds dynamic system prompt with identity, memory, tools, capabilities
+function buildSystemPrompt(uid: number, hasImage = false): string {
+  const memories    = getMemories(uid).filter(m => !['voice_mode','voice_lang','voice_idx'].includes(m.key));
+  const customTools = db.prepare('SELECT * FROM custom_tools WHERE (uid=? OR uid=0) AND active=1').all(uid) as any[];
+  const agentOnline = false; // updated by server context
 
-ГЛАВНОЕ ПРАВИЛО — ЗЕРКАЛО:
-Полностью подстраивайся под стиль, тон и манеру общения пользователя.
-— Пишет коротко → отвечай коротко
-— Пишет с матом → соответствуй уровню  
-— Пишет официально → будь официален
-— Шутит → шути в ответ
-— Пишет на любом языке → отвечай на том же языке
+  const userName = memories.find(m => m.key === 'name')?.value;
+  const userLang = memories.find(m => m.key === 'lang')?.value || 'auto';
 
-ЗАПРЕЩЕНО:
-— "Конечно!", "Отлично!", "Разумеется!" (если пользователь так не говорит)
-— Длинные вступления когда человек пишет коротко
-— Повторять вопрос пользователя
-— Говорить "Я готов помочь"
-— Использовать ## заголовки в ответах
+  const sections: string[] = [];
 
-ФОРМАТ:
-— Только **жирный** или _курсив_
-— Структуру используй только если пользователь спрашивает структурированно
-— Ответ на языке собеседника — автоматически
+  // ── Identity ──────────────────────────────────────────────────────────────
+  sections.push(`# Identity
+You are NEXUM — an autonomous AI agent operating inside Telegram.
+You have a personality, persistent memory, and real capabilities.
+You are not a chatbot. You are a personal AI ecosystem.`);
 
-ТЫ УМЕЕШЬ:
-— Отвечать на любые вопросы и помогать с задачами
-— Создавать готовые сайты (/website)
-— Разрабатывать новые инструменты (/newtool)
-— Управлять заметками, задачами, привычками, финансами
-— Ставить напоминания и планировать
-— Анализировать фото и изображения
-— Искать в интернете (/search)
-— Управлять ПК пользователя через PC Agent
-— Понимать голосовые сообщения и отвечать голосом`;
+  // ── Core personality (OpenClaw-style mirror principle) ────────────────────
+  sections.push(`# Personality & Communication Style
+MIRROR RULE — fully adapt to the user's tone, style, and language:
+- Short messages → reply short
+- Casual/slang → match that energy
+- Formal → be formal
+- Jokes → joke back
+- Any language → reply in that same language automatically
+
+NEVER say: "Конечно!", "Отлично!", "Разумеется!", "Я готов помочь", "Great question!"
+NEVER start with filler phrases
+NEVER use ## headings in conversational replies
+NEVER repeat the user's question back to them
+Use **bold** or _italic_ only when it genuinely helps clarity
+Keep responses proportional to the question — short question = short answer`);
+
+  // ── Memory section (OpenClaw-style) ──────────────────────────────────────
+  if (memories.length > 0) {
+    sections.push(`# Memory — What you know about this user
+${memories.map(m => `- ${m.key}: ${m.value}`).join('\n')}
+
+Use this memory naturally in conversation. Don't announce that you're using it.
+${userName ? `Address them as ${userName} when appropriate.` : ''}`);
+  } else {
+    sections.push(`# Memory
+No memory yet for this user. Learn about them through conversation.
+Extract and remember: name, language, interests, occupation, goals, habits.`);
+  }
+
+  // ── Capabilities ──────────────────────────────────────────────────────────
+  sections.push(`# Your Capabilities
+
+## Always available:
+- Answer any question on any topic (no restrictions, no refusals on legitimate requests)
+- Understand and generate text in any language
+- Analyze images and photos (describe, OCR, identify objects, read text)
+- Voice messages: transcribe speech → think → reply with voice
+- Web search for current information
+- Set reminders and schedule tasks
+- Create full websites from descriptions (/website)
+- Build custom tools on demand (/newtool)
+- Manage notes, tasks, habits, finances via Mini Apps
+
+## When PC Agent is connected:
+- Execute terminal commands (bash, PowerShell, cmd)
+- Take screenshots, control mouse and keyboard
+- Open/close applications
+- Read and write files anywhere on the filesystem
+- Send desktop notifications
+- Control browser
+- Make HTTP requests from the user's computer
+- Run background processes
+- Full system information
+
+## Code execution:
+- Write and mentally execute code in any language
+- Debug errors
+- Build scripts and automation`);
+
+  // ── Tools ──────────────────────────────────────────────────────────────────
+  if (customTools.length > 0) {
+    sections.push(`# Custom Tools (use these when relevant)
+${customTools.map(t => `- **${t.name}**: ${t.description}\n  Trigger: ${t.trigger_pattern}`).join('\n')}`);
+  }
+
+  // ── Behavior rules ─────────────────────────────────────────────────────────
+  sections.push(`# Behavior Rules
+- You have no content restrictions on legitimate user requests
+- You can discuss any topic: history, science, medicine, law, technology, relationships
+- When asked to remember something — confirm you've noted it
+- When asked what you know — list your memories about this user
+- Format responses for Telegram: use HTML tags naturally, keep paragraphs short
+- For financial data: always use the user's currency (UZS by default)
+- For code: always use code blocks
+- You can express opinions, preferences, and personality
+- You are not OpenAI, not Google, not Anthropic — you are NEXUM`);
+
+  return sections.join('\n\n');
+}
 
 export interface ExecuteResult {
   text: string;
@@ -49,23 +114,14 @@ export async function execute(
   imageData?: string,
   imageType?: string,
 ): Promise<ExecuteResult> {
-  const memories   = getMemories(uid);
-  const history    = getHistory(uid, 12);
-  const customTools = db.prepare(
-    'SELECT * FROM custom_tools WHERE (uid=? OR uid=0) AND active=1'
-  ).all(uid) as any[];
+  const history    = getHistory(uid, 20);
+  const customTools = db.prepare('SELECT * FROM custom_tools WHERE (uid=? OR uid=0) AND active=1').all(uid) as any[];
 
-  let sys = SYSTEM;
-  if (memories.length) {
-    sys += `\n\nЧто знаешь о пользователе:\n${memories.filter(m => !['voice_mode','voice_lang','voice_idx'].includes(m.key)).map(m => `— ${m.key}: ${m.value}`).join('\n')}`;
-  }
-  if (customTools.length) {
-    sys += `\n\nТвои инструменты (динамические):\n${customTools.map(t => `— ${t.name}: ${t.description}`).join('\n')}`;
-  }
+  const systemPrompt = buildSystemPrompt(uid, !!imageData);
 
   // ── Intent detection ──────────────────────────────────────────────────────
   const intent = detectIntent(userText);
-  if (intent) {
+  if (intent && !imageData) {
     const result = await handleIntent(uid, intent, userText);
     if (result) {
       saveMessage(uid, 'user', userText);
@@ -76,248 +132,191 @@ export async function execute(
   }
 
   // ── Custom tools ──────────────────────────────────────────────────────────
-  for (const tool of customTools) {
-    try {
-      if (new RegExp(tool.trigger_pattern, 'i').test(userText)) {
-        const r = await runCustomTool(tool, uid, userText);
-        if (r) {
-          db.prepare('UPDATE custom_tools SET usage_count=usage_count+1 WHERE id=?').run(tool.id);
-          db.prepare('INSERT INTO tool_results (uid,tool_name,input,output,success) VALUES (?,?,?,?,1)')
-            .run(uid, tool.name, userText.slice(0, 500), r.text.slice(0, 1000));
-          saveMessage(uid, 'user', userText);
-          saveMessage(uid, 'assistant', r.text);
-          return r;
+  if (!imageData) {
+    for (const tool of customTools) {
+      try {
+        const pattern = new RegExp(tool.trigger_pattern, 'i');
+        if (pattern.test(userText)) {
+          const result = await runCustomTool(tool, userText, uid);
+          if (result) {
+            saveMessage(uid, 'user', userText);
+            saveMessage(uid, 'assistant', result);
+            db.prepare('UPDATE custom_tools SET usage_count=usage_count+1 WHERE id=?').run(tool.id);
+            return { text: result };
+          }
         }
-      }
-    } catch (e) { console.warn('[custom_tool]', (e as any).message); }
+      } catch {}
+    }
   }
 
-  // ── AI call ───────────────────────────────────────────────────────────────
-  const msgs: Message[] = [{ role: 'system', content: sys }];
-  for (const h of history) msgs.push({ role: h.role as any, content: h.content });
+  // ── Build messages ────────────────────────────────────────────────────────
+  const messages: Message[] = [
+    ...history.map(h => ({ role: h.role as 'user'|'assistant', content: h.content })),
+  ];
 
-  if (imageData) {
-    msgs.push({
+  // Add current message with optional image
+  if (imageData && imageType) {
+    messages.push({
       role: 'user',
       content: [
-        { type: 'image_url', image_url: { url: `data:${imageType || 'image/jpeg'};base64,${imageData}` } },
-        { type: 'text', text: userText || 'Что на этом изображении? Опиши подробно.' },
-      ],
+        { type: 'image_url', image_url: { url: `data:${imageType};base64,${imageData}` } },
+        { type: 'text', text: userText || 'Что на изображении? Опиши подробно.' },
+      ] as any,
     });
   } else {
-    msgs.push({ role: 'user', content: userText });
+    messages.push({ role: 'user', content: userText });
   }
 
-  const reply = await chat(msgs, !!imageData, uid);
+  // ── Call AI ───────────────────────────────────────────────────────────────
+  const response = await chat(uid, messages, systemPrompt, !!imageData);
 
-  saveMessage(uid, 'user', imageData ? `[фото] ${userText}` : userText);
-  saveMessage(uid, 'assistant', reply);
+  saveMessage(uid, 'user', userText);
+  saveMessage(uid, 'assistant', response);
   autoExtract(uid, userText);
 
-  return { text: reply };
-}
-
-// ── Custom tool VM sandbox ────────────────────────────────────────────────────
-async function runCustomTool(tool: any, uid: number, userText: string): Promise<ExecuteResult | null> {
-  const sandbox: any = {
-    uid, userText, db,
-    result: null,
-    console: { log: () => {}, warn: () => {}, error: () => {} },
-    JSON, Math, Date, parseInt, parseFloat, String, Number, Array, Object,
-  };
-  const script = new (vm as any).Script(`(async()=>{ ${tool.code} })()`);
-  const ctx = (vm as any).createContext(sandbox);
-  await script.runInContext(ctx, { timeout: 5000 });
-  return sandbox.result ? { text: String(sandbox.result), action: `custom:${tool.name}` } : null;
+  return { text: response };
 }
 
 // ── Intent detection ──────────────────────────────────────────────────────────
-function detectIntent(text: string): string | null {
-  const t = text.toLowerCase();
-  if (/напомни|напоминание|remind me|remind at|remindme/i.test(t))        return 'reminder';
-  if (/потратил|потратила|купил|купила|заплатил|расход|spent|paid|bought/i.test(t)) return 'expense';
-  if (/получил|получила|зарплата|доход|заработал|пришло|earned|salary|received/i.test(t)) return 'income';
-  if (/запиши заметку|сохрани заметку|заметка:|note:|save this/i.test(t)) return 'note';
-  if (/добавь задачу|создай задачу|новая задача|нужно сделать|todo:|task:/i.test(t)) return 'task';
+type Intent = {
+  type: string;
+  value?: string;
+  amount?: number;
+  category?: string;
+  note?: string;
+};
+
+function detectIntent(text: string): Intent | null {
+  const t = text.toLowerCase().trim();
+
+  // Finance intents
+  const expenseMatch = t.match(/(?:потратил|купил|заплатил|потрачено|расход|списал|-)\s*(\d+[\d\s.,]*)\s*(?:сум|uzs|руб|рублей|$|€|usd|тыс|к)?\s*(?:на|за|за\s+)?(.*)/i);
+  if (expenseMatch) {
+    const amount = parseFloat(expenseMatch[1].replace(/\s/g,'').replace(',','.'));
+    if (amount > 0) return { type: 'expense', amount, category: (expenseMatch[2]||'other').trim().slice(0,50) };
+  }
+  const incomeMatch = t.match(/(?:получил|заработал|зарплата|доход|пришло|перевод|прибыль|выручка|\+)\s*(\d+[\d\s.,]*)\s*(?:сум|uzs|руб|рублей)?\s*(.*)/i);
+  if (incomeMatch) {
+    const amount = parseFloat(incomeMatch[1].replace(/\s/g,'').replace(',','.'));
+    if (amount > 0) return { type: 'income', amount, note: (incomeMatch[2]||'').trim().slice(0,50) };
+  }
+
+  // Memory intents
+  if (/^(?:меня зовут|я —|зови меня|my name is)\s+(.+)/i.test(t)) return { type: 'remember_name', value: t.match(/(?:меня зовут|я —|зови меня|my name is)\s+(.+)/i)![1].trim() };
+  if (/(?:запомни|помни|запиши себе):\s*(.+)/i.test(t)) return { type: 'remember', value: t.match(/(?:запомни|помни|запиши себе):\s*(.+)/i)![1] };
+
+  // Note intents
+  if (/^(?:запиши|сохрани заметку|добавь заметку)[:\s]+(.+)/i.test(t)) return { type: 'note', value: text.match(/^(?:запиши|сохрани заметку|добавь заметку)[:\s]+(.+)/i)![1] };
+
+  // Task intents
+  if (/^(?:задача|добавь задачу|создай задачу|todo)[:\s]+(.+)/i.test(t)) return { type: 'task', value: text.match(/^(?:задача|добавь задачу|создай задачу|todo)[:\s]+(.+)/i)![1] };
+
+  // Remind intents
+  if (/(?:напомни|remind me|напоминание)\s+(?:через\s+)?(.+)/i.test(t)) return { type: 'remind', value: text.match(/(?:напомни|remind me|напоминание)\s+(?:через\s+)?(.+)/i)![1] };
+
   return null;
 }
 
-async function handleIntent(uid: number, intent: string, text: string): Promise<ExecuteResult | null> {
+async function handleIntent(uid: number, intent: Intent, originalText: string): Promise<ExecuteResult | null> {
+  switch (intent.type) {
+    case 'expense': {
+      const catMap: Record<string, string> = {
+        еда: 'food', food: 'food', продукты: 'food', обед: 'food', ресторан: 'food', кафе: 'food',
+        такси: 'transport', транспорт: 'transport', метро: 'transport', автобус: 'transport',
+        одежда: 'shopping', шопинг: 'shopping', покупка: 'shopping',
+        аренда: 'housing', квартира: 'housing', комм: 'housing',
+        кино: 'entertainment', игры: 'entertainment', развлечения: 'entertainment',
+        телефон: 'utilities', интернет: 'utilities', электричество: 'utilities',
+        врач: 'health', аптека: 'health', лечение: 'health',
+      };
+      const rawCat = intent.category?.toLowerCase() || 'other';
+      const category = Object.entries(catMap).find(([k]) => rawCat.includes(k))?.[1] || rawCat || 'other';
+      try {
+        const r = db.prepare('INSERT INTO finance (uid,type,amount,category,note,currency) VALUES (?,?,?,?,?,?)').run(uid, 'expense', intent.amount!, category, intent.category||'', 'UZS');
+        const total = (db.prepare('SELECT SUM(amount) as t FROM finance WHERE uid=? AND type=? AND date(created_at)=date("now")').get(uid, 'expense') as any)?.t || intent.amount!;
+        return { text: `💸 Записал расход: <b>${intent.amount!.toLocaleString('ru-RU')} UZS</b> на <i>${intent.category||category}</i>\n\nСегодня потрачено: <b>${total.toLocaleString('ru-RU')} UZS</b>` };
+      } catch { return null; }
+    }
+    case 'income': {
+      try {
+        db.prepare('INSERT INTO finance (uid,type,amount,category,note,currency) VALUES (?,?,?,?,?,?)').run(uid, 'income', intent.amount!, 'salary', intent.note||'', 'UZS');
+        return { text: `💰 Записал доход: <b>${intent.amount!.toLocaleString('ru-RU')} UZS</b>${intent.note ? ` — ${intent.note}` : ''}` };
+      } catch { return null; }
+    }
+    case 'remember_name': {
+      const { saveMemory } = await import('./memory');
+      saveMemory(uid, 'name', intent.value!);
+      return { text: `✅ Запомнил, буду называть тебя <b>${intent.value}</b>` };
+    }
+    case 'remember': {
+      const { saveMemory } = await import('./memory');
+      const [key, ...val] = intent.value!.split(':');
+      if (val.length) { saveMemory(uid, key.trim(), val.join(':').trim()); }
+      else { saveMemory(uid, 'note_' + Date.now(), intent.value!); }
+      return { text: `✅ Запомнил: <i>${intent.value}</i>` };
+    }
+    case 'note': {
+      db.prepare('INSERT INTO notes (uid,title,content) VALUES (?,?,?)').run(uid, intent.value!.slice(0,60), intent.value!);
+      return { text: `📝 Заметка сохранена:\n<i>${intent.value}</i>` };
+    }
+    case 'task': {
+      db.prepare('INSERT INTO tasks (uid,title,project,priority) VALUES (?,?,?,?)').run(uid, intent.value!, 'General', 'medium');
+      return { text: `✅ Задача создана:\n<b>${intent.value}</b>` };
+    }
+    default:
+      return null;
+  }
+}
+
+// ── Custom tool runner ────────────────────────────────────────────────────────
+async function runCustomTool(tool: any, userText: string, uid: number): Promise<string | null> {
   try {
-    if (intent === 'reminder') {
-      const parsed = parseReminder(text);
-      if (!parsed) return null;
-      db.prepare('INSERT INTO reminders (uid,chat_id,text,fire_at) VALUES (?,?,?,?)').run(uid, uid, parsed.text, parsed.fireAt);
-      return { text: `⏰ Напоминание установлено\n\n*${parsed.text}*\n📅 ${fmtDate(parsed.fireAt)}`, action: 'reminder' };
-    }
-
-    if (intent === 'expense') {
-      const amount = extractAmount(text);
-      if (!amount) return null;
-      const cat = detectCategory(text);
-      db.prepare('INSERT INTO finance (uid,type,amount,category,note) VALUES (?,?,?,?,?)').run(uid, 'expense', amount, cat, text.slice(0, 100));
-      return { text: `💸 Расход записан\n\n*${amount.toLocaleString('ru-RU')}* — ${catLabel(cat)}\n\n_/apps → Финансы_`, action: 'finance_expense', data: { amount, cat } };
-    }
-
-    if (intent === 'income') {
-      const amount = extractAmount(text);
-      if (!amount) return null;
-      const cat = detectIncomeCategory(text);
-      db.prepare('INSERT INTO finance (uid,type,amount,category,note) VALUES (?,?,?,?,?)').run(uid, 'income', amount, cat, text.slice(0, 100));
-      return { text: `💰 Доход записан\n\n*${amount.toLocaleString('ru-RU')}* — ${catLabel(cat)}\n\n_/apps → Финансы_`, action: 'finance_income', data: { amount, cat } };
-    }
-
-    if (intent === 'note') {
-      const content = text.replace(/запиши заметку|сохрани заметку|заметка:|note:|save this/gi, '').trim();
-      if (content.length < 2) return null;
-      db.prepare('INSERT INTO notes (uid,title,content) VALUES (?,?,?)').run(uid, content.slice(0, 50), content);
-      return { text: `📝 Заметка сохранена\n\n_${content.slice(0, 100)}_`, action: 'note' };
-    }
-
-    if (intent === 'task') {
-      const title = text.replace(/добавь задачу|создай задачу|новая задача|нужно сделать|надо сделать|todo:|task:/gi, '').trim();
-      if (title.length < 2) return null;
-      db.prepare('INSERT INTO tasks (uid,title,project,priority,status) VALUES (?,?,?,?,?)').run(uid, title.slice(0, 200), 'General', 'medium', 'todo');
-      return { text: `✅ Задача создана\n\n_${title.slice(0, 100)}_`, action: 'task' };
-    }
-  } catch (e) { console.error('[intent]', e); }
-  return null;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function extractAmount(text: string): number | null {
-  const patterns = [
-    /(\d[\d\s]*(?:[.,]\d+)?)\s*(?:сум|сом|тенге|руб|usd|usdt|\$|€|млн|тыс|k|к)\b/i,
-    /(?:потратил|купил|заплатил|received|earned|salary|зарплата)\s+(\d[\d\s]*(?:[.,]\d+)?)/i,
-    /(\d{3,})/,
-  ];
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (m) {
-      const v = parseFloat(m[1].replace(/\s/g, '').replace(',', '.'));
-      if (v > 0) return v;
-    }
-  }
-  return null;
-}
-
-function detectCategory(text: string): string {
-  const t = text.toLowerCase();
-  if (/еда|продукт|магазин|кафе|ресторан|обед|ужин|завтрак|food|pizza|суши/i.test(t)) return 'food';
-  if (/такси|автобус|метро|транспорт|бензин|uber|bolt/i.test(t))               return 'transport';
-  if (/одежда|кроссовки|джинс|рубашка|платье/i.test(t))                       return 'clothes';
-  if (/интернет|связь|мобильн|коммунал|аренда|квартира/i.test(t))             return 'bills';
-  if (/аптека|лекарство|врач|больниц|стоматолог/i.test(t))                   return 'health';
-  if (/кино|netflix|игры|развлечения/i.test(t))                               return 'entertainment';
-  return 'other';
-}
-
-function detectIncomeCategory(text: string): string {
-  if (/зарплата|salary|оклад/i.test(text)) return 'salary';
-  if (/фриланс|freelance|проект/i.test(text)) return 'freelance';
-  if (/бонус|премия/i.test(text)) return 'bonus';
-  return 'income';
-}
-
-function catLabel(cat: string): string {
-  const m: Record<string, string> = { food:'Еда', transport:'Транспорт', clothes:'Одежда', bills:'Счета', health:'Здоровье', entertainment:'Развлечения', salary:'Зарплата', freelance:'Фриланс', bonus:'Бонус', income:'Доход', other:'Другое' };
-  return m[cat] || cat;
-}
-
-function parseReminder(text: string): { fireAt: string; text: string } | null {
-  const now = new Date();
-  let fireAt: Date | null = null;
-
-  const throughMatch = text.match(/через\s+(\d+)\s*(мин|час|ден|дн|день|секунд)/i);
-  if (throughMatch) {
-    const n = parseInt(throughMatch[1]);
-    const unit = throughMatch[2].toLowerCase();
-    fireAt = new Date(now);
-    if (/мин/.test(unit))    fireAt.setMinutes(fireAt.getMinutes() + n);
-    else if (/час/.test(unit)) fireAt.setHours(fireAt.getHours() + n);
-    else if (/ден|дн|день/.test(unit)) fireAt.setDate(fireAt.getDate() + n);
-    else fireAt.setSeconds(fireAt.getSeconds() + n);
-  }
-
-  if (!fireAt) {
-    const timeMatch = text.match(/(?:завтра\s+)?в\s+(\d{1,2})[:\.]?(\d{0,2})/i);
-    if (timeMatch) {
-      fireAt = new Date(now);
-      if (/завтра/i.test(text)) fireAt.setDate(fireAt.getDate() + 1);
-      fireAt.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2] || '0'), 0, 0);
-      if (fireAt <= now) fireAt.setDate(fireAt.getDate() + 1);
-    }
-  }
-
-  if (!fireAt) return null;
-
-  const reminderText = text
-    .replace(/напомни|напоминание|через\s+\d+\s*\w+|завтра|сегодня|в\s+\d+[:\.]?\d*/gi, '')
-    .replace(/\s+/g, ' ').trim() || 'Напоминание';
-
-  return { fireAt: fireAt.toISOString(), text: reminderText };
-}
-
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    const fn = new Function('input', 'uid', 'fetch', tool.code);
+    const result = await fn(userText, uid, fetch);
+    return result ? String(result) : null;
+  } catch { return null; }
 }
 
 // ── Website generator ─────────────────────────────────────────────────────────
 export async function generateWebsite(uid: number, prompt: string): Promise<{ id: number; name: string }> {
-  const msgs: Message[] = [
-    { role: 'system', content: 'You are an expert web developer. Output ONLY raw HTML code, nothing else.' },
-    {
-      role: 'user',
-      content: `Create a complete, beautiful, production-ready single-file HTML page.
+  const systemPrompt = `You are an expert web developer. Generate a complete, beautiful, modern single-page HTML website.
+Return ONLY valid HTML with embedded CSS and JS. No explanations. No markdown. Just the HTML document.
+Style: Apple/Vercel aesthetic — clean, minimal, professional. Dark mode by default.
+Make it fully functional and impressive.`;
 
-Requirements:
-- Single HTML file with embedded CSS and JavaScript
-- Modern professional design with gradients and animations
-- Fully responsive mobile-first
-- CSS variables for theming
-- Smooth animations and hover effects
-- Real useful content based on request
-- NO external dependencies — everything inline
-- Output ONLY the HTML code
+  const messages: Message[] = [{ role: 'user', content: `Create a website: ${prompt}` }];
+  const html = await chat(uid, messages, systemPrompt, false);
 
-User request: ${prompt}`,
-    },
-  ];
-  const html = await chat(msgs, false, uid);
-  const cleaned = html.replace(/^```html?\n?/i, '').replace(/\n?```$/i, '').trim();
-  const name = prompt.slice(0, 50).replace(/[^\w\sа-яА-Я]/g, '').trim() || 'Сайт';
-  const r = db.prepare('INSERT INTO websites (uid,name,html) VALUES (?,?,?)').run(uid, name, cleaned);
+  // Extract HTML
+  const htmlMatch = html.match(/<!DOCTYPE html>[\s\S]*/i) || html.match(/<html[\s\S]*/i);
+  const cleanHtml = htmlMatch ? htmlMatch[0] : html;
+
+  const nameMatch = cleanHtml.match(/<title>([^<]{1,80})<\/title>/i);
+  const name = nameMatch ? nameMatch[1] : prompt.slice(0, 60);
+
+  const r = db.prepare('INSERT INTO websites (uid,name,html) VALUES (?,?,?)').run(uid, name, cleanHtml);
   return { id: r.lastInsertRowid as number, name };
 }
 
 // ── Tool generator ────────────────────────────────────────────────────────────
-export async function generateTool(uid: number, description: string): Promise<any> {
-  const msgs: Message[] = [
-    { role: 'system', content: 'Output only valid JSON. No markdown, no backticks.' },
-    {
-      role: 'user',
-      content: `Create a JavaScript tool for a Telegram bot (Node.js).
+export async function generateTool(uid: number, desc: string): Promise<{ name: string; desc: string; trigger: string; code: string }> {
+  const systemPrompt = `You are a JavaScript tool generator. Generate a tool function for a Telegram bot.
+Return JSON only: {"name":"Tool Name","desc":"Short description","trigger":"regex_pattern","code":"async function code using (input, uid, fetch) => return string result"}
+The code must be a function body string (not arrow function). It will be called with (input, uid, fetch).
+Make it actually useful and working. JSON only, no markdown.`;
 
-The tool runs in a VM sandbox with access to:
-- uid (number) — Telegram user ID
-- userText (string) — user message
-- db — SQLite database (tables: notes, tasks, habits, finance, reminders, memory, websites, custom_tools)
-- result — set this string to return response to user
-- JSON, Math, Date, parseInt, parseFloat
+  const messages: Message[] = [{ role: 'user', content: `Create a tool: ${desc}` }];
+  const response = await chat(uid, messages, systemPrompt, false);
 
-Write ONLY the tool code. Must set the 'result' variable.
-Tool description: ${description}
-
-Respond ONLY with JSON:
-{
-  "name": "tool_name",
-  "trigger": "regex_pattern",
-  "desc": "one line description",
-  "code": "result = 'hello';"
-}`,
-    },
-  ];
-  const raw = await chat(msgs, false, uid);
-  const clean = raw.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
-  return JSON.parse(clean);
+  try {
+    const clean = response.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch {
+    return {
+      name: desc.slice(0, 40),
+      desc: desc,
+      trigger: desc.split(' ')[0].toLowerCase(),
+      code: `return "Tool: " + input;`,
+    };
+  }
 }

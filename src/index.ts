@@ -14,21 +14,19 @@ async function main() {
 
   const bot = new Bot(config.botToken);
   const app = startServer(bot);
-
   setupHandlers(bot, app);
   startScheduler(bot);
 
-  // Non-blocking start — HTTP server responds to healthcheck immediately
+  // Non-blocking start — Railway healthcheck works immediately
   bot.start({
-    onStart: () => {
-      console.log('[bot] ✅ NEXUM v11 started');
-      console.log(`[bot] Admin IDs: ${config.adminIds.join(', ') || 'none'}`);
-      console.log(`[bot] Public bot: ${config.publicBot}`);
+    onStart: (info) => {
+      console.log(`[bot] ✅ NEXUM v12 started as @${info.username}`);
+      console.log(`[bot] Admins: ${config.adminIds.join(', ')||'none'}`);
     },
     drop_pending_updates: false,
-  }).catch(e => console.error('[bot] error', e));
+  }).catch(e => console.error('[bot] fatal:', e));
 
-  console.log('[main] ✅ NEXUM initialized');
+  console.log('[main] ✅ NEXUM v12 ready');
 }
 
 main().catch(e => { console.error('[fatal]', e); process.exit(1); });

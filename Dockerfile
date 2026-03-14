@@ -11,7 +11,11 @@ RUN npm install
 
 COPY . .
 
+# Compile TypeScript
 RUN npx tsc --skipLibCheck || true
+
+# Copy public files into dist (Mini Apps fix)
+RUN cp -r src/public dist/public 2>/dev/null || true
 
 RUN mkdir -p data
 

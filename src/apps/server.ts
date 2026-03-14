@@ -6,6 +6,7 @@ import crypto      from 'crypto';
 import { config }  from '../core/config';
 import { db }      from '../core/db';
 
+// Public dir works both in dev (src/public) and prod (dist/public)
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 function validateInitData(initData: string): number | null {
@@ -40,13 +41,23 @@ export function startServer(bot?: any) {
   });
   app.options('*', (_req, res) => res.sendStatus(200));
 
-  // ── Static Mini Apps ────────────────────────────────────────────────────
+  // ── Static Mini Apps ─────────────────────────────────────────────────────
   const pages = ['hub','finance','notes','tasks','habits','sites','tools'];
-  for (const p of pages) app.get(`/${p === 'hub' ? '' : p}`, (_req, res) => res.sendFile(path.join(PUBLIC_DIR, `${p}.html`)));
+  for (const p of pages) {
+    app.get(`/${p === 'hub' ? '' : p}`, (_req, res) => {
+      const file = path.join(PUBLIC_DIR, `${p}.html`);
+      res.sendFile(file, (err) => {
+        if (err) res.status(404).send(`Mini App not found: ${p}`);
+      });
+    });
+  }
   app.get('/hub', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'hub.html')));
   app.get('/tools-app', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'tools.html')));
-  app.get('/health', (_req, res) => res.json({ ok: true, version: '11.0.0', uptime: process.uptime() }));
 
+  // ── Health check ─────────────────────────────────────────────────────────
+  app.get('/health', (_req, res) => res.json({ ok: true, version: '12.0.0', uptime: process.uptime() }));
+
+  // ── Site viewer ──────────────────────────────────────────────────────────
   app.get('/site/:id', (req, res) => {
     const site = db.prepare('SELECT * FROM websites WHERE id=?').get(parseInt(req.params.id)) as any;
     if (!site) return res.status(404).send('<h1>Not found</h1>');
@@ -199,6 +210,28 @@ export function startServer(bot?: any) {
     res.json({ ok:true, data:users });
   });
 
+  // ── Approval API (OpenClaw-style) ─────────────────────────────────────────
+  app.post('/api/approval/:id/approve', (req, res) => {
+    const { id } = req.params;
+    const uid = getUid(req);
+    if (!uid || !config.adminIds.includes(uid)) return res.status(403).json({ ok:false });
+    const pending = pendingApprovals.get(id);
+    if (!pending) return res.status(404).json({ ok:false, error:'Not found' });
+    pending.resolve(true);
+    pendingApprovals.delete(id);
+    res.json({ ok:true });
+  });
+  app.post('/api/approval/:id/deny', (req, res) => {
+    const { id } = req.params;
+    const uid = getUid(req);
+    if (!uid || !config.adminIds.includes(uid)) return res.status(403).json({ ok:false });
+    const pending = pendingApprovals.get(id);
+    if (!pending) return res.status(404).json({ ok:false, error:'Not found' });
+    pending.resolve(false);
+    pendingApprovals.delete(id);
+    res.json({ ok:true });
+  });
+
   // ── WebSocket (PC Agent) ─────────────────────────────────────────────────
   const httpServer = createServer(app);
   const wss        = new WebSocketServer({ server: httpServer, path: '/ws' });
@@ -217,7 +250,6 @@ export function startServer(bot?: any) {
         if (mtype === 'request_link') {
           const code = Math.random().toString(36).slice(2, 8).toUpperCase();
           linkCodes.set(code, { deviceId: msg.device_id, platform: msg.platform || 'Unknown', ws });
-          // Save to db for /link fallback
           const expires = new Date(Date.now() + 5 * 60 * 1000).toISOString();
           db.prepare('INSERT OR REPLACE INTO link_codes (code,device_id,platform,expires_at) VALUES (?,?,?,?)').run(code, msg.device_id, msg.platform || 'Unknown', expires);
           ws.send(JSON.stringify({ type: 'link_code', code }));
@@ -238,7 +270,6 @@ export function startServer(bot?: any) {
           if (p) { p.resolve(msg); pending.delete(msg.reqId); }
         } else if (mtype === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
-          // Update last_seen
           if (wsUid) db.prepare("UPDATE pc_agents SET last_seen=datetime('now') WHERE uid=?").run(wsUid);
         }
       } catch (e) { console.error('[ws] parse error', e); }
@@ -279,6 +310,61 @@ export function startServer(bot?: any) {
   };
 
   const port = config.port;
-  httpServer.listen(port, () => console.log(`[server] ✅ NEXUM v11 on :${port}`));
+  httpServer.listen(port, '0.0.0.0', () => console.log(`[server] ✅ NEXUM v12 on :${port}`));
   return app;
+}
+
+// ── Approval system (OpenClaw-style) ──────────────────────────────────────────
+// Pending approvals map: id → { resolve, command, uid }
+export const pendingApprovals = new Map<string, {
+  resolve: (approved: boolean) => void;
+  command: string;
+  uid: number;
+  createdAt: number;
+}>();
+
+export async function requestApproval(params: {
+  bot: any;
+  uid: number;
+  command: string;
+  type: 'dangerous' | 'system' | 'delete';
+}): Promise<boolean> {
+  const id  = crypto.randomUUID().slice(0, 8);
+  const adminIds = (await import('../core/config')).config.adminIds;
+
+  return new Promise((resolve) => {
+    pendingApprovals.set(id, {
+      resolve,
+      command: params.command,
+      uid: params.uid,
+      createdAt: Date.now(),
+    });
+
+    // Auto-deny after 60 seconds
+    setTimeout(() => {
+      if (pendingApprovals.has(id)) {
+        pendingApprovals.delete(id);
+        resolve(false);
+      }
+    }, 60000);
+
+    // Send approval request to all admins
+    const icon = params.type === 'delete' ? '🗑' : params.type === 'system' ? '⚙️' : '⚠️';
+    const msg  = `${icon} <b>Требуется подтверждение</b>\n\n` +
+                 `👤 Пользователь: <code>${params.uid}</code>\n` +
+                 `💻 Команда:\n<pre>${params.command.slice(0, 500)}</pre>\n\n` +
+                 `ID: <code>${id}</code>`;
+
+    for (const adminId of adminIds) {
+      params.bot.api.sendMessage(adminId, msg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '✅ Разрешить', callback_data: `approve_${id}` },
+            { text: '❌ Отклонить', callback_data: `deny_${id}` },
+          ]]
+        }
+      }).catch(() => {});
+    }
+  });
 }

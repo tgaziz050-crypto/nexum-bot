@@ -18,14 +18,17 @@ async function main() {
   setupHandlers(bot, app);
   startScheduler(bot);
 
-  await bot.start({
+  // Non-blocking start — HTTP server responds to healthcheck immediately
+  bot.start({
     onStart: () => {
       console.log('[bot] ✅ NEXUM v11 started');
       console.log(`[bot] Admin IDs: ${config.adminIds.join(', ') || 'none'}`);
       console.log(`[bot] Public bot: ${config.publicBot}`);
     },
     drop_pending_updates: false,
-  });
+  }).catch(e => console.error('[bot] error', e));
+
+  console.log('[main] ✅ NEXUM initialized');
 }
 
 main().catch(e => { console.error('[fatal]', e); process.exit(1); });

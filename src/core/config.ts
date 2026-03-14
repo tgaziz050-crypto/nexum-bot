@@ -1,43 +1,54 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-function getKeys(prefix: string): string[] {
-  const keys: string[] = [];
+function keys(prefix: string): string[] {
+  const out: string[] = [];
   for (let i = 1; i <= 10; i++) {
     const v = process.env[`${prefix}${i}`]?.trim();
-    if (v) keys.push(v);
+    if (v) out.push(v);
   }
-  return keys;
+  return out;
 }
 
 export const config = {
-  botToken: process.env.BOT_TOKEN!,
-  adminIds: (process.env.ADMIN_IDS || '').split(',').map(s => parseInt(s.trim())).filter(Boolean),
-  webappUrl: process.env.WEBAPP_URL || '',
-  port: parseInt(process.env.PORT || '3000'),
+  botToken:   process.env.BOT_TOKEN!,
+  adminIds:   (process.env.ADMIN_IDS || '').split(',').map(s => parseInt(s.trim())).filter(Boolean),
+  webappUrl:  (process.env.WEBAPP_URL || '').replace(/\/$/, ''),
+  port:       parseInt(process.env.PORT || process.env.NODE_PORT || '3000'),
+  dbPath:     process.env.DB_PATH || './data/nexum.db',
+  publicBot:  process.env.PUBLIC_BOT === 'true',
 
   ai: {
-    cerebras:   getKeys('CB'),
-    groq:       getKeys('GR'),
-    gemini:     getKeys('G'),
-    grok:       getKeys('GK'),
-    sambanova:  getKeys('SN'),
-    together:   getKeys('TO'),
-    openrouter: getKeys('OR'),
-    deepseek:   getKeys('DS'),
-    claude:     getKeys('CL'),
+    cerebras:   keys('CB'),
+    groq:       keys('GR'),
+    gemini:     keys('G'),
+    grok:       keys('GK'),
+    sambanova:  keys('SN'),
+    together:   keys('TO'),
+    openrouter: keys('OR'),
+    deepseek:   keys('DS'),
+    claude:     keys('CL'),
   },
-
-  serper: getKeys('SERPER_KEY'),
-  voiceMode: process.env.VOICE_MODE || 'auto',
-  wsPort: parseInt(process.env.WS_PORT || '18790'),
+  serper: [
+    process.env.SERPER_KEY,
+    process.env.SERPER_KEY2,
+    process.env.SERPER_KEY3,
+  ].filter(Boolean) as string[],
 };
 
-const rotations: Record<string, number> = {};
+// Round-robin key rotation per provider
+const _idx: Record<string, number> = {};
 export function getKey(provider: keyof typeof config.ai): string | null {
-  const keys = config.ai[provider];
-  if (!keys.length) return null;
-  const idx = (rotations[provider] || 0) % keys.length;
-  rotations[provider] = idx + 1;
-  return keys[idx];
+  const list = config.ai[provider];
+  if (!list.length) return null;
+  const i = (_idx[provider] || 0) % list.length;
+  _idx[provider] = i + 1;
+  return list[i];
+}
+
+export function getSerperKey(): string | null {
+  if (!config.serper.length) return null;
+  const i = (_idx['serper'] || 0) % config.serper.length;
+  _idx['serper'] = i + 1;
+  return config.serper[i];
 }

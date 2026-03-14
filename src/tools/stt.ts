@@ -1,31 +1,27 @@
 import { getKey } from '../core/config';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const FormData = require('form-data');
+const fetch    = require('node-fetch');
 
-export async function transcribeVoice(audioBuffer: Buffer, filename = 'voice.ogg'): Promise<string> {
-  const key = getKey('groq');
-  if (!key) throw new Error('No Groq key for STT');
-
-  const form = new FormData();
-  form.append('file', audioBuffer, { filename, contentType: 'audio/ogg' });
-  form.append('model', 'whisper-large-v3-turbo');
-  form.append('response_format', 'text');
-
-  // Use node-fetch v2 (CommonJS)
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const fetch = require('node-fetch');
-
-  const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, ...form.getHeaders() },
-    body: form
-  });
-
-  if (!r.ok) {
-    const err = await r.text();
-    throw new Error(`Groq STT error ${r.status}: ${err}`);
+export async function transcribeVoice(buf: Buffer, filename = 'voice.ogg'): Promise<string> {
+  // Try Groq first (fastest)
+  const groqKey = getKey('groq');
+  if (groqKey) {
+    try {
+      const form = new FormData();
+      form.append('file', buf, { filename, contentType: 'audio/ogg' });
+      form.append('model', 'whisper-large-v3-turbo');
+      form.append('response_format', 'text');
+      const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${groqKey}`, ...form.getHeaders() },
+        body: form,
+      });
+      if (r.ok) return (await r.text()).trim();
+      console.warn('[stt] groq', await r.text());
+    } catch (e) { console.warn('[stt] groq error:', e); }
   }
 
-  const text = await r.text();
-  return text.trim();
+  // Fallback: Cerebras can't do STT, try OpenRouter with whisper (not available)
+  // Return empty so caller can handle gracefully
+  throw new Error('Нет ключа для STT (нужен Groq или OpenAI)');
 }

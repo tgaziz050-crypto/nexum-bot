@@ -3,34 +3,13 @@
     "target": "ES2020",
     "module": "commonjs",
     "lib": ["ES2020"],
-    "moduleResolution": "node",
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": false,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
-    "declaration": false,
     "resolveJsonModule": true
   },
-  "include": [
-    "src/index.ts",
-    "src/core/**/*.ts",
-    "src/agent/**/*.ts",
-    "src/apps/**/*.ts",
-    "src/telegram/**/*.ts",
-    "src/tools/**/*.ts",
-    "src/scheduler/**/*.ts",
-    "src/memory/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "src/browser/**",
-    "src/agents/**"
-  ],
-  "ts-node": {
-    "transpileOnly": true,
-    "files": true
-  }
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
